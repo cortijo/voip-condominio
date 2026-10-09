@@ -71,6 +71,8 @@ object SipManager {
     private fun friendlyError(message: String): String = when {
         message.contains("Forbidden", true) ->
             "Recusado pelo Issabel (403). Verifique ramal/senha (secret), se o IP do celular é permitido (permit/deny) e a porta do SIP."
+        message.contains("I/O", true) || message.contains("io error", true) ->
+            "Não conectou ao servidor (I/O error). Confira IP, porta e transporte (UDP/TCP), e se o celular alcança o Issabel (mesma rede/VPN)."
         message.contains("Unauthorized", true) -> "Ramal ou senha incorretos (401)."
         message.contains("timeout", true) || message.contains("Timeout", true) ->
             "Sem resposta do servidor. Verifique IP, porta, Wi-Fi/rede e firewall."
