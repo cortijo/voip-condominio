@@ -14,7 +14,8 @@ class Store(context: Context) {
         password = sp.getString("sip_pass", "") ?: "",
         domain = sp.getString("sip_domain", "") ?: "",
         port = sp.getInt("sip_port", 5060),
-        portariaExt = sp.getString("sip_portaria", "") ?: ""
+        portariaExt = sp.getString("sip_portaria", "") ?: "",
+        transport = sp.getString("sip_transport", "UDP") ?: "UDP"
     )
 
     fun saveSip(c: SipConfig) {
@@ -25,6 +26,7 @@ class Store(context: Context) {
             .putString("sip_domain", c.domain)
             .putInt("sip_port", c.port)
             .putString("sip_portaria", c.portariaExt)
+            .putString("sip_transport", c.transport)
             .apply()
     }
 

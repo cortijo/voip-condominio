@@ -37,7 +37,7 @@ object SipManager {
             when (state) {
                 RegistrationState.Ok -> { registered = true; registration = "Conectado" }
                 RegistrationState.Progress -> { registered = false; registration = "Conectando…" }
-                RegistrationState.Failed -> { registered = false; registration = "Falha no registro: $message" }
+                RegistrationState.Failed -> { registered = false; registration = friendlyError(message) }
                 RegistrationState.Cleared, RegistrationState.None -> {
                     registered = false; registration = "Desconectado"
                 }
@@ -68,6 +68,15 @@ object SipManager {
         }
     }
 
+    private fun friendlyError(message: String): String = when {
+        message.contains("Forbidden", true) ->
+            "Recusado pelo Issabel (403). Verifique ramal/senha (secret), se o IP do celular é permitido (permit/deny) e a porta do SIP."
+        message.contains("Unauthorized", true) -> "Ramal ou senha incorretos (401)."
+        message.contains("timeout", true) || message.contains("Timeout", true) ->
+            "Sem resposta do servidor. Verifique IP, porta, Wi-Fi/rede e firewall."
+        else -> "Falha no registro: $message"
+    }
+
     fun init(context: Context) {
         if (core != null) return
         val factory = Factory.instance()
@@ -95,7 +104,7 @@ object SipManager {
         val params = c.createAccountParams()
         params.identityAddress = factory.createAddress("sip:${cfg.user}@${cfg.domain}")
         val server = factory.createAddress("sip:${cfg.domain}:${cfg.port}")
-        server?.transport = TransportType.Udp
+        server?.transport = if (cfg.transport == "TCP") TransportType.Tcp else TransportType.Udp
         params.serverAddress = server
 
         val account = c.createAccount(params)

@@ -9,7 +9,8 @@ data class SipConfig(
     val password: String = "",      // secret do ramal
     val domain: String = "",        // IP ou hostname do Issabel
     val port: Int = 5060,
-    val portariaExt: String = ""    // ramal da portaria
+    val portariaExt: String = "",   // ramal da portaria
+    val transport: String = "UDP"   // UDP | TCP
 ) {
     val isComplete: Boolean
         get() = user.isNotBlank() && password.isNotBlank() && domain.isNotBlank()

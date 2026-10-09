@@ -315,6 +315,7 @@ fun SettingsScreen(state: AppState) {
     var domain by remember { mutableStateOf(s.domain) }
     var port by remember { mutableStateOf(s.port.toString()) }
     var portaria by remember { mutableStateOf(s.portariaExt) }
+    var transport by remember { mutableStateOf(s.transport) }
     val ctx = LocalContext.current
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -337,6 +338,13 @@ fun SettingsScreen(state: AppState) {
                 pass, { pass = it }, label = { Text("Senha do ramal (secret)") }, singleLine = true,
                 visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth()
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Transporte:")
+                listOf("UDP", "TCP").forEach { t ->
+                    RadioButton(selected = transport == t, onClick = { transport = t })
+                    Text(t)
+                }
+            }
             OutlinedTextField(
                 portaria, { portaria = it.trim() }, label = { Text("Ramal da portaria") }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth()
@@ -344,7 +352,7 @@ fun SettingsScreen(state: AppState) {
             Button(
                 onClick = {
                     state.saveSip(
-                        SipConfig(displayName.trim(), user, pass, domain, port.toIntOrNull() ?: 5060, portaria)
+                        SipConfig(displayName.trim(), user, pass, domain, port.toIntOrNull() ?: 5060, portaria, transport)
                     )
                     Toast.makeText(ctx, "Salvo. Registrando ramal…", Toast.LENGTH_SHORT).show()
                 },
