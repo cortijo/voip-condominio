@@ -55,5 +55,5 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.3.1")
 
     // SIP / VoIP
-    implementation("org.linphone:linphone-sdk-android:5.3.+")
+    implementation("org.linphone:linphone-sdk-android:5.3.110")
 }
