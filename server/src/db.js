@@ -160,6 +160,35 @@ addColumn('messages', 'kind', "TEXT NOT NULL DEFAULT 'text'");
 addColumn('messages', 'media', 'TEXT');
 addColumn('messages', 'mime', "TEXT NOT NULL DEFAULT ''");
 
+// visitas: o morador gera um link, o visitante preenche, o porteiro valida na chegada
+db.exec(`
+CREATE TABLE IF NOT EXISTS visitors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  condo_id INTEGER NOT NULL REFERENCES condos(id) ON DELETE CASCADE,
+  resident_id INTEGER REFERENCES residents(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'aguardando',
+  source TEXT NOT NULL DEFAULT 'morador',
+  name TEXT NOT NULL DEFAULT '',
+  doc_type TEXT NOT NULL DEFAULT 'CPF',
+  document TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL DEFAULT '',
+  vehicle TEXT NOT NULL DEFAULT '',
+  plate TEXT NOT NULL DEFAULT '',
+  photo TEXT,
+  visit_date TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  decided_by TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  registered_at INTEGER,
+  decided_at INTEGER,
+  left_at INTEGER,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_visitors_condo ON visitors(condo_id, id);
+CREATE INDEX IF NOT EXISTS idx_visitors_resident ON visitors(resident_id, id);
+`);
+
 const DEFAULT_COLORS = {
   primary: '#FF9800',
   onPrimary: '#000000',

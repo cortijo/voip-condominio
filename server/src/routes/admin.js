@@ -6,6 +6,7 @@ const { db, UPLOADS_DIR, DEFAULT_COLORS } = require('../db');
 const media = require('../media');
 const { panelAuth, need, condoAccess, killSessions } = require('../auth');
 const { wrap, bad, clean, cleanColors, hashPw, now, isConstraint } = require('../util');
+const visits = require('./visits');
 
 const r = express.Router();
 r.use(panelAuth);
@@ -92,6 +93,7 @@ r.put('/condos/:cid', need('master'), condoAccess, (req, res) => {
 
 r.delete('/condos/:cid', need('master'), condoAccess, (req, res) => {
   media.purge(db.prepare('SELECT media FROM messages WHERE condo_id=? AND media IS NOT NULL').all(req.condo.id));
+  media.purge(db.prepare('SELECT photo AS media FROM visitors WHERE condo_id=? AND photo IS NOT NULL').all(req.condo.id));
   if (req.condo.logo) fs.rmSync(path.join(UPLOADS_DIR, req.condo.logo), { force: true });
   db.prepare('DELETE FROM condos WHERE id=?').run(req.condo.id);
   res.json({ ok: true });
@@ -379,6 +381,7 @@ r.put('/condos/:cid/residents/:id', need(...ADMINS), condoAccess, wrap(async (re
 r.delete('/condos/:cid/residents/:id', need(...ADMINS), condoAccess, (req, res) => {
   const id = Number(req.params.id);
   media.purge(db.prepare('SELECT media FROM messages WHERE resident_id=? AND media IS NOT NULL').all(id));
+  media.purge(db.prepare('SELECT photo AS media FROM visitors WHERE resident_id=? AND photo IS NOT NULL').all(id));
   killSessions('app', id);
   db.prepare('DELETE FROM residents WHERE id=? AND condo_id=?').run(id, req.condo.id);
   res.json({ ok: true });
@@ -493,6 +496,9 @@ r.get('/condos/:cid/chats/:rid/file/:mid', need(...ALL), condoAccess, (req, res)
   if (!row) return bad(res, 'Arquivo não encontrado.', 404);
   media.send(res, row);
 });
+
+// ------------------------------------------------------------------- visitas
+r.use('/condos/:cid/visitors', need(...ALL), condoAccess, visits.admin);
 
 // ------------------------------------------------- aplicativos conectados (logados)
 r.get('/condos/:cid/devices', need(...ALL), condoAccess, (req, res) => {

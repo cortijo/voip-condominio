@@ -9,6 +9,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.HowToReg
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -23,6 +28,7 @@ import androidx.core.content.ContextCompat
 import br.com.interfone.virtual.AudioRecorder
 import br.com.interfone.virtual.MediaUtil
 import br.com.interfone.virtual.Notice
+import br.com.interfone.virtual.Visit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -306,6 +312,7 @@ fun HomeScreen(nav: Nav) {
                 else -> nav.push(Route.Portaria)
             }
         }
+        MenuCard(Icons.Default.HowToReg, "LIBERAR VISITA") { nav.push(Route.Visitors) }
         MenuCard(Icons.Default.Videocam, "VER CÂMERAS") { nav.tab(Route.Cameras) }
     }
 }
@@ -395,11 +402,23 @@ fun NoticesScreen() {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     var marking by remember { mutableStateOf(setOf<Long>()) }
+    var query by remember { mutableStateOf("") }
+    val q = query.trim()
+    val shown = if (q.isEmpty()) Repo.notices.toList() else Repo.notices.filter {
+        it.title.contains(q, ignoreCase = true) || it.body.contains(q, ignoreCase = true) || kindLabel(it.kind).contains(q, ignoreCase = true)
+    }
     Column(Modifier.fillMaxSize()) {
         Header("Mural de avisos")
+        OutlinedTextField(
+            query, { query = it }, singleLine = true, placeholder = { Text("Pesquisar avisos") },
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
+            trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Limpar", tint = Muted) } },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+        )
         if (Repo.notices.isEmpty()) Empty("Nenhum aviso por enquanto.")
+        else if (shown.isEmpty()) Empty("Nenhum aviso encontrado para \"$q\".")
         LazyColumn {
-            items(Repo.notices, key = { it.id }) { n ->
+            items(shown, key = { it.id }) { n ->
                 Column(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
                         .clip(RoundedCornerShape(12.dp)).background(Surface1).padding(16.dp)
@@ -652,6 +671,155 @@ fun ChatScreen() {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- liberação de visitas
+
+private fun visitStatus(v: Visit): Pair<String, Color> = when {
+    v.expired -> "Link expirado" to Muted
+    v.status == "aguardando" -> "Aguardando cadastro do visitante" to Muted
+    v.status == "cadastrado" -> "Cadastrado — aguardando a portaria" to Accent
+    v.status == "liberado" -> "Liberado ✓" to Color(0xFF66BB6A)
+    v.status == "recusado" -> "Recusado" to Red
+    v.status == "saiu" -> "Visita encerrada" to Muted
+    else -> "Cancelado" to Muted
+}
+
+private fun shareVisit(ctx: android.content.Context, v: Visit) {
+    val condo = Repo.config?.condoName ?: "o condomínio"
+    val text = "Olá! Para liberar sua entrada em $condo, preencha seu cadastro neste link " +
+        "(nome, CPF ou RG, veículo, telefone e foto): ${v.link}"
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, text)
+    }
+    ctx.startActivity(android.content.Intent.createChooser(send, "Enviar link ao visitante"))
+}
+
+@Composable
+private fun VisitCard(v: Visit) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var photo by remember(v.id, v.hasPhoto) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(v.id, v.hasPhoto) { if (v.hasPhoto) photo = Repo.visitPhoto(v.id) }
+    val (label, color) = visitStatus(v)
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp)).background(Surface1).padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val p = photo
+            if (p != null) {
+                Image(p, null, contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(CircleShape))
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(v.name.ifBlank { "Visitante (sem nome)" }, fontWeight = FontWeight.Bold, color = TextC)
+                Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        val lines = listOfNotNull(
+            if (v.document.isNotBlank()) "${v.docType} ${v.document}" else null,
+            v.phone.takeIf { it.isNotBlank() }?.let { "Tel. $it" },
+            listOf(v.vehicle, v.plate).filter { it.isNotBlank() }.joinToString(" · ").takeIf { it.isNotBlank() },
+            v.visitDate.takeIf { it.isNotBlank() }?.let { "Data prevista: " + it.split("-").reversed().joinToString("/") }
+        )
+        if (lines.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            lines.forEach { Text(it, color = Muted, fontSize = 13.sp) }
+        }
+        if (v.open && !v.expired) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { shareVisit(ctx, v) }, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)
+                ) {
+                    Icon(Icons.Default.Share, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("ENVIAR LINK", fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        try { Repo.cancelVisit(v) } catch (e: Exception) {
+                            Toast.makeText(ctx, e.message ?: "Falha ao cancelar", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }) { Text("CANCELAR", color = Red) }
+            }
+        }
+    }
+}
+
+@Composable
+fun VisitorsScreen(nav: Nav) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var dialog by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var date by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        while (true) { Repo.loadVisits(); delay(10000) }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Header("Liberar visita", onBack = { nav.pop() })
+        Text(
+            "Gere um link e envie ao visitante. Ele preenche nome, CPF ou RG, veículo, telefone e foto; a portaria valida quando ele chegar.",
+            color = Muted, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Button(
+            onClick = { name = ""; date = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")).format(Date()); dialog = true },
+            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
+            modifier = Modifier.fillMaxWidth().padding(12.dp).height(50.dp)
+        ) { Text("NOVA VISITA / GERAR LINK", fontWeight = FontWeight.Bold) }
+        if (Repo.visits.isEmpty()) Empty("Nenhuma visita ainda.")
+        LazyColumn { items(Repo.visits.toList(), key = { it.id }) { VisitCard(it) } }
+    }
+
+    if (dialog) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) dialog = false },
+            title = { Text("Nova visita") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Nome do visitante (opcional)") })
+                    OutlinedTextField(
+                        date, { date = it }, singleLine = true, label = { Text("Data prevista (dd/mm/aaaa)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !busy, onClick = {
+                    var iso = ""
+                    if (date.isNotBlank()) {
+                        val f = SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")).apply { isLenient = false }
+                        val parsed = try { f.parse(date.trim()) } catch (e: Exception) { null }
+                        if (parsed == null) {
+                            Toast.makeText(ctx, "Data inválida. Use dd/mm/aaaa.", Toast.LENGTH_SHORT).show()
+                            return@TextButton
+                        }
+                        iso = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(parsed)
+                    }
+                    busy = true
+                    scope.launch {
+                        try {
+                            val v = Repo.createVisit(name.trim(), iso)
+                            dialog = false
+                            shareVisit(ctx, v)
+                        } catch (e: Exception) {
+                            Toast.makeText(ctx, e.message ?: "Falha ao criar", Toast.LENGTH_SHORT).show()
+                        }
+                        busy = false
+                    }
+                }) { Text("GERAR E ENVIAR LINK") }
+            },
+            dismissButton = { TextButton(enabled = !busy, onClick = { dialog = false }) { Text("Cancelar") } }
+        )
     }
 }
 

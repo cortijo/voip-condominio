@@ -190,7 +190,7 @@ function navItems() {
   if (isMaster()) n.push(['design', 'Design e informações'], ['voip', 'Servidor VoIP']);
   if (canManage()) n.push(['residents', 'Moradores'], ['groups', 'Grupos de acesso'], ['portaria', 'Ramal da portaria'], ['extensions', 'Ramais VoIP'], ['cameras', 'Câmeras']);
   else n.push(['residents', 'Moradores']);
-  n.push(['notices', 'Avisos e push'], ['chat', 'Chat com moradores'], ['devices', 'Aplicativos conectados']);
+  n.push(['notices', 'Avisos e push'], ['chat', 'Chat com moradores'], ['visitors', 'Visitas'], ['devices', 'Aplicativos conectados']);
   if (!isMaster()) n.push(['phone', 'Telefone']);
   if (canManage()) n.push(['team', 'Equipe do painel']);
   return n;
@@ -874,6 +874,154 @@ PAGES.chat = async () => {
   every(3500, async () => { await pull(); await loadList(); });
   return h('div', {}, head('Chat com moradores', 'Conversas internas entre moradores e a portaria. Atualiza automaticamente.'),
     h('div', { class: 'chat' }, list, h('div', { class: 'chat-pane' }, title, msgs, form)));
+};
+
+// ------------------------------------------------------------------ visitas
+const VSTATUS = {
+  aguardando: ['Aguardando cadastro', ''], cadastrado: ['Cadastrado — validar', 'encomenda'], liberado: ['Liberado', 'ok'],
+  recusado: ['Recusado', 'off'], saiu: ['Saiu', ''], cancelado: ['Cancelado', 'off'],
+};
+const dmy = (d) => (d ? d.split('-').reverse().join('/') : '');
+
+async function authBlobUrl(path) {
+  const r = await fetch(path, { headers: { Authorization: 'Bearer ' + S.token } });
+  if (!r.ok) throw new Error();
+  return URL.createObjectURL(await r.blob());
+}
+
+function copyText(text, input) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => toast('Link copiado'));
+  input.select();
+  try { document.execCommand('copy'); toast('Link copiado'); } catch (e) { toast('Selecione e copie o link', true); }
+  return Promise.resolve();
+}
+
+function linkBox(v) {
+  const inp = h('input', { value: v.link, readonly: true, onclick: (e) => e.target.select() });
+  return h('div', { class: 'linkbox' }, inp, h('button', { class: 'btn sm', type: 'button', onclick: () => copyText(v.link, inp) }, 'Copiar'));
+}
+
+function visitFields(residents) {
+  return [
+    { k: 'resident_id', num: true, label: 'Morador visitado', type: 'select',
+      options: [{ v: '', l: '— visitante sem morador (cadastro na portaria) —' }, ...residents.filter((r) => r.active).map((r) => ({ v: r.id, l: `${r.name}${r.block || r.unit ? ' — ' + [r.block, r.unit].filter(Boolean).join(' ') : ''}` }))] },
+    { k: 'name', label: 'Nome do visitante', max: 100, help: 'Deixe nome/documento/telefone em branco para só gerar o link de cadastro.' },
+    { k: 'doc_type', label: 'Tipo do documento', type: 'select', options: [{ v: 'CPF', l: 'CPF' }, { v: 'RG', l: 'RG' }] },
+    { k: 'document', label: 'CPF ou RG', max: 20 },
+    { k: 'phone', label: 'Telefone', max: 20 },
+    { k: 'vehicle', label: 'Veículo', max: 60 },
+    { k: 'plate', label: 'Placa', max: 8 },
+    { k: 'visit_date', label: 'Data prevista', type: 'date' },
+    { k: 'note', label: 'Observação', max: 300 },
+  ];
+}
+
+async function visitDetail(v0, refresh) {
+  let v = v0;
+  const bg = h('div', { class: 'modal-bg' });
+  const close = () => { bg.remove(); refresh(); };
+  const body = h('div', {});
+  const paint = async () => {
+    const [txt, cls] = VSTATUS[v.status] || [v.status, ''];
+    let photo = h('div', { class: 'vphoto none' }, 'Sem foto');
+    if (v.has_photo) {
+      photo = h('div', { class: 'vphoto none' }, 'Carregando foto…');
+      authBlobUrl(`${base()}/visitors/${v.id}/photo`).then((u) => { photo.className = 'vphoto'; photo.replaceChildren(h('img', { src: u, alt: 'Foto' })); }).catch(() => { photo.textContent = 'Foto indisponível'; });
+    }
+    const act = async (action, msg) => {
+      if (msg && !confirmBox(msg)) return;
+      try { v = await api('POST', `${base()}/visitors/${v.id}/action`, { action }); toast('Atualizado'); paint(); } catch (ex) { toast(ex.message, true); }
+    };
+    const fileIn = h('input', {
+      type: 'file', accept: 'image/*', hidden: true, capture: 'user',
+      onchange: async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        try { await api('POST', `${base()}/visitors/${v.id}/photo`, { data: await downscaleToJpeg(f) }); v.has_photo = true; toast('Foto salva'); paint(); } catch (ex) { toast(ex.message, true); }
+      },
+    });
+    const row = (l, val) => h('div', { class: 'vrow' }, h('span', {}, l), h('b', {}, val || '—'));
+    body.replaceChildren(
+      h('h3', {}, v.name || 'Visitante (aguardando cadastro)'),
+      h('div', { class: 'vgrid' }, photo, h('div', {},
+        h('div', {}, h('span', { class: 'badge ' + cls }, txt), v.expired ? h('span', { class: 'badge off' }, 'link expirado') : null),
+        row('Documento', v.document ? `${v.doc_type} ${v.document}` : ''), row('Telefone', v.phone),
+        row('Veículo', v.vehicle), row('Placa', v.plate),
+        row('Morador', v.resident_name ? `${v.resident_name} ${[v.resident_block, v.resident_unit].filter(Boolean).join(' · ')}` : 'Cadastro na portaria'),
+        row('Data prevista', dmy(v.visit_date)), row('Observação', v.note),
+        v.decided_at ? row('Decisão', `${v.decided_by} · ${fmt(v.decided_at)}`) : null)),
+      ['aguardando', 'cadastrado'].includes(v.status) ? h('div', { style: 'margin:12px 0' }, h('div', { class: 'sub' }, 'Link de cadastro do visitante:'), linkBox(v)) : null,
+      h('div', { class: 'row', style: 'margin-top:12px' },
+        ['aguardando', 'cadastrado'].includes(v.status) ? h('button', { class: 'btn primary', onclick: () => act('liberar') }, '✓ Liberar entrada') : null,
+        v.status === 'liberado' ? h('button', { class: 'btn primary', onclick: () => act('saida') }, 'Registrar saída') : null,
+        ['aguardando', 'cadastrado', 'liberado'].includes(v.status) ? h('button', { class: 'btn danger', onclick: () => act('recusar', 'Recusar esta visita?') }, 'Recusar') : null,
+        h('button', { class: 'btn', onclick: () => fileIn.click() }, '📷 Foto'), fileIn,
+        h('button', {
+          class: 'btn',
+          onclick: () => formModal({
+            title: 'Editar visita', fields: visitFields([]).filter((f) => f.k !== 'resident_id'), values: v, submitLabel: 'Salvar',
+            onSubmit: async (x) => { v = await api('PUT', `${base()}/visitors/${v.id}`, x); toast('Salvo'); paint(); },
+          }),
+        }, 'Editar dados'),
+        h('button', {
+          class: 'btn danger',
+          onclick: async () => { if (!confirmBox('Excluir esta visita e a foto?')) return; await api('DELETE', `${base()}/visitors/${v.id}`); close(); },
+        }, 'Excluir'),
+        h('button', { class: 'btn', onclick: close }, 'Fechar')));
+  };
+  bg.append(h('div', { class: 'modal wide' }, body));
+  bg.addEventListener('mousedown', (e) => { if (e.target === bg) close(); });
+  document.body.append(bg);
+  paint();
+}
+
+PAGES.visitors = async () => {
+  const residents = await api('GET', `${base()}/residents`);
+  let filter = '';
+  let known = null;
+  const holder = h('div', { class: 'card' });
+  const sel = h('select', { onchange: (e) => { filter = e.target.value; load(); } },
+    h('option', { value: '' }, 'Todas'), Object.entries(VSTATUS).map(([k, [l]]) => h('option', { value: k }, l)));
+  async function load() {
+    const rows = await api('GET', `${base()}/visitors${filter ? '?status=' + filter : ''}`);
+    const pending = rows.filter((x) => x.status === 'cadastrado').length;
+    if (known !== null && pending > known) { toast('Novo visitante cadastrado — aguardando validação.'); }
+    known = pending;
+    holder.replaceChildren(h('h2', {}, `${rows.length} visita(s)${pending ? ` — ${pending} aguardando validação` : ''}`), table([
+      { h: 'Criada', f: (v) => fmt(v.created_at) },
+      { h: 'Visitante', f: (v) => [h('b', {}, v.name || '—'), v.document ? h('div', { class: 'sub' }, `${v.doc_type} ${v.document}`) : null] },
+      { h: 'Morador', f: (v) => (v.resident_name ? [v.resident_name, h('div', { class: 'sub' }, [v.resident_block, v.resident_unit].filter(Boolean).join(' · '))] : h('em', {}, 'portaria')) },
+      { h: 'Veículo', f: (v) => [v.vehicle, v.plate ? h('div', { class: 'sub' }, v.plate) : null] },
+      { h: 'Telefone', f: (v) => v.phone },
+      { h: 'Previsão', f: (v) => dmy(v.visit_date) },
+      { h: 'Status', f: (v) => { const [t, c] = VSTATUS[v.status] || [v.status, '']; return badge(v.expired ? t + ' (expirado)' : t, c); } },
+      { h: '', act: true, f: (v) => h('div', { class: 'row', style: 'justify-content:flex-end' },
+        v.status === 'cadastrado' ? h('button', { class: 'btn sm primary', onclick: async () => { try { await api('POST', `${base()}/visitors/${v.id}/action`, { action: 'liberar' }); toast('Entrada liberada'); load(); } catch (ex) { toast(ex.message, true); } } }, 'Liberar') : null,
+        h('button', { class: 'btn sm', onclick: () => visitDetail(v, load) }, 'Detalhes')) },
+    ], rows, 'Nenhuma visita.'));
+  }
+  await load();
+  every(8000, load);
+  return h('div', {},
+    head('Visitas', 'O morador gera o link no app; o visitante se cadastra (com foto) e o porteiro valida na chegada.',
+      h('label', { class: 'row' }, h('span', { class: 'sub' }, 'Mostrar:'), sel),
+      h('button', {
+        class: 'btn primary',
+        onclick: () => formModal({
+          title: 'Nova visita', fields: visitFields(residents), values: { doc_type: 'CPF' }, submitLabel: 'Cadastrar',
+          note: 'Preencha os dados para cadastrar na portaria, ou deixe em branco para gerar apenas o link.',
+          onSubmit: async (x) => {
+            const v = await api('POST', `${base()}/visitors`, x);
+            load();
+            if (v.status === 'aguardando') {
+              const bg = h('div', { class: 'modal-bg' });
+              bg.append(h('div', { class: 'modal' }, h('h3', {}, 'Link de cadastro gerado'), h('p', { class: 'sub' }, 'Envie este link ao visitante (WhatsApp, SMS…):'), linkBox(v),
+                h('div', { class: 'row end', style: 'margin-top:12px' }, h('button', { class: 'btn', onclick: () => bg.remove() }, 'Fechar'))));
+              document.body.append(bg);
+            } else toast('Visita cadastrada');
+          },
+        }),
+      }, '+ Nova visita')),
+    holder);
 };
 
 // ------------------------------------------------------------------ ramal da portaria

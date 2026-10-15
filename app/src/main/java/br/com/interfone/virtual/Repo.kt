@@ -2,6 +2,7 @@ package br.com.interfone.virtual
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,6 +37,7 @@ object Repo {
     var unreadChat by mutableIntStateOf(0)
     val notices = mutableStateListOf<Notice>()      // mais recentes primeiro
     val chat = mutableStateListOf<ChatMessage>()    // mais antigas primeiro
+    val visits = mutableStateListOf<Visit>()        // convites de visita do morador
 
     /** Definido pela MainActivity: usado para decidir se notifica e para pedir permissão de microfone. */
     @Volatile var appInForeground = false
@@ -112,6 +114,7 @@ object Repo {
         notices.clear(); chat.clear()
         unreadChat = 0
         clearMediaCache()
+        visits.clear()
         Brand.apply(BrandColors())
         SipManager.register(SipConfig())
         try { ctx.stopService(Intent(ctx, SyncService::class.java)) } catch (e: Exception) { /* ignora */ }
@@ -130,7 +133,7 @@ object Repo {
                 val full = store.server + url
                 scope.launch {
                     val bmp = withContext(Dispatchers.IO) {
-                        Api.fetchBytes(full)?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+                        Api.fetchBytes(full)?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }?.let { cleanLogo(it) }
                     }
                     if (lastLogoUrl == url) logo = bmp?.asImageBitmap()
                 }
@@ -251,6 +254,78 @@ object Repo {
         val tk = store.token
         withContext(Dispatchers.IO) { Api.sendMedia(srv, tk, kind, bytes) }
         poll()
+    }
+
+    suspend fun loadVisits() {
+        val srv = store.server
+        val tk = store.token
+        if (tk.isBlank()) return
+        try {
+            val list = withContext(Dispatchers.IO) { Api.visits(srv, tk) }
+            visits.clear(); visits.addAll(list)
+        } catch (e: ApiException) {
+            handleAuthError(e)
+        } catch (e: Exception) { /* sem conexão: mantém a lista */ }
+    }
+
+    suspend fun createVisit(name: String, isoDate: String): Visit {
+        val srv = store.server
+        val tk = store.token
+        val v = withContext(Dispatchers.IO) { Api.createVisit(srv, tk, name, isoDate) }
+        visits.add(0, v)
+        return v
+    }
+
+    suspend fun cancelVisit(v: Visit) {
+        val srv = store.server
+        val tk = store.token
+        withContext(Dispatchers.IO) { Api.cancelVisit(srv, tk, v.id) }
+        loadVisits()
+    }
+
+    suspend fun visitPhoto(id: Long): ImageBitmap? {
+        val srv = store.server
+        val tk = store.token
+        return withContext(Dispatchers.IO) {
+            Api.fetchAuth(srv, tk, "/api/app/visitors/$id/photo")?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
+        }
+    }
+
+    /** Remove o fundo branco ligado às bordas e recorta as margens, para o logotipo ficar centrado. */
+    private fun cleanLogo(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w < 4 || h < 4 || w * h > 4_000_000) return src
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        fun light(p: Int) = (p ushr 24) < 16 || (((p shr 16) and 255) > 236 && ((p shr 8) and 255) > 236 && (p and 255) > 236)
+        val seen = BooleanArray(w * h)
+        val queue = IntArray(w * h)
+        var qs = 0
+        var qe = 0
+        fun push(i: Int) { if (!seen[i] && light(px[i])) { seen[i] = true; queue[qe++] = i } }
+        for (x in 0 until w) { push(x); push((h - 1) * w + x) }
+        for (y in 0 until h) { push(y * w); push(y * w + w - 1) }
+        while (qs < qe) {
+            val i = queue[qs++]
+            val x = i % w
+            val y = i / w
+            if (x > 0) push(i - 1)
+            if (x < w - 1) push(i + 1)
+            if (y > 0) push(i - w)
+            if (y < h - 1) push(i + w)
+        }
+        var minX = w; var maxX = -1; var minY = h; var maxY = -1
+        for (i in px.indices) {
+            if (seen[i]) { px[i] = 0 } else {
+                val x = i % w; val y = i / w
+                if (x < minX) minX = x; if (x > maxX) maxX = x
+                if (y < minY) minY = y; if (y > maxY) maxY = y
+            }
+        }
+        if (maxX < minX) return src
+        val full = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        return Bitmap.createBitmap(full, minX, minY, maxX - minX + 1, maxY - minY + 1)
     }
 
     private fun mediaDir() = java.io.File(ctx.cacheDir, "chat").apply { mkdirs() }

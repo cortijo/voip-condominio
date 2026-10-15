@@ -13,6 +13,7 @@ sealed interface Route {
     data class CameraView(val id: String) : Route
     data object Notices : Route
     data object Chat : Route
+    data object Visitors : Route
     data object Settings : Route
 }
 

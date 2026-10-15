@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Cadastro de visita</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { --p:#e8890c; --on:#1a1100; --bg:#f4f5f7; --card:#fff; --tx:#1d2330; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--tx); }
+    main { max-width: 480px; margin: 0 auto; padding: 18px 16px 40px; }
+    .top { text-align: center; padding: 10px 0 14px; }
+    .top img { max-width: 70%; max-height: 120px; object-fit: contain; }
+    .top h1 { font-size: 22px; margin: 8px 0 2px; }
+    .top p { margin: 0; color: #667085; }
+    form, .box { background: var(--card); border-radius: 14px; padding: 18px; border: 1px solid #e4e7ec; display: grid; gap: 14px; }
+    label { display: grid; gap: 5px; font-weight: 600; font-size: 14px; }
+    label small { font-weight: 400; color: #667085; }
+    input, select { font: inherit; padding: 12px; border: 1px solid #cfd4dc; border-radius: 10px; width: 100%; background: #fff; color: var(--tx); }
+    input:focus, select:focus { outline: 2px solid var(--p); }
+    .row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; }
+    button { font: inherit; font-weight: 700; padding: 14px; border-radius: 10px; border: 0; background: var(--p); color: var(--on); cursor: pointer; }
+    button.sec { background: #eef0f4; color: var(--tx); font-weight: 600; }
+    button:disabled { opacity: .55; }
+    .err { background: #fdecea; color: #c0392b; padding: 10px 12px; border-radius: 10px; }
+    .ok { background: #e3f4e8; color: #1e8e3e; padding: 14px; border-radius: 10px; font-weight: 600; text-align: center; }
+    .photo { display: grid; gap: 8px; justify-items: center; }
+    .photo img { width: 160px; height: 160px; object-fit: cover; border-radius: 50%; border: 3px solid var(--p); }
+    .photo .ph { width: 160px; height: 160px; border-radius: 50%; background: #eef0f4; display: grid; place-items: center; color: #667085; text-align: center; font-size: 13px; padding: 12px; }
+    .hint { color: #667085; font-size: 13px; text-align: center; }
+  </style>
+</head>
+<body>
+  <main id="m"><div class="box">Carregando…</div></main>
+  <script src="/visita.js"></script>
+</body>
+</html>

@@ -100,6 +100,7 @@ class MainActivity : ComponentActivity() {
                                         is Route.CameraView -> CameraViewScreen(nav, r.id)
                                         Route.Notices -> NoticesScreen()
                                         Route.Chat -> ChatScreen()
+                                        Route.Visitors -> VisitorsScreen(nav)
                                         Route.Settings -> SettingsScreen()
                                     }
                                 }

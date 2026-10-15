@@ -71,6 +71,25 @@ data class ChatMessage(
         get() = when (kind) { "image" -> "📷 Foto"; "audio" -> "🎤 Áudio"; else -> body }
 }
 
+/** Convite de visita: o morador gera o link; o visitante se cadastra; a portaria valida. */
+data class Visit(
+    val id: Long,
+    val status: String,   // aguardando | cadastrado | liberado | recusado | saiu | cancelado
+    val name: String,
+    val docType: String,
+    val document: String,
+    val phone: String,
+    val vehicle: String,
+    val plate: String,
+    val visitDate: String,
+    val link: String,
+    val hasPhoto: Boolean,
+    val expired: Boolean,
+    val createdAt: Long
+) {
+    val open: Boolean get() = (status == "aguardando" || status == "cadastrado")
+}
+
 data class BrandColors(
     val primary: Color = Color(0xFFFF9800),
     val onPrimary: Color = Color.Black,

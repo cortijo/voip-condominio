@@ -172,3 +172,13 @@ ul.plain li { display: flex; justify-content: space-between; align-items: center
 .quick { display: grid; gap: 4px; max-height: 420px; overflow: auto; }
 .qrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 @media (max-width: 860px) { #phone-dock { left: 16px; } }
+
+/* ---------- visitas ---------- */
+.modal.wide { max-width: 640px; }
+.vgrid { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: start; }
+.vphoto { width: 150px; height: 190px; border-radius: 10px; overflow: hidden; background: #eef0f4; display: grid; place-items: center; color: var(--muted); font-size: 12px; }
+.vphoto img { width: 100%; height: 100%; object-fit: cover; }
+.vrow { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.vrow span { color: var(--muted); min-width: 100px; }
+.linkbox { display: flex; gap: 6px; margin-top: 4px; }
+@media (max-width: 600px) { .vgrid { grid-template-columns: 1fr; } }

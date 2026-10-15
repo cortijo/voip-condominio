@@ -85,6 +85,8 @@ r.post('/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+r.use('/visitors', require('./visits').app);
+
 r.get('/config', (req, res) => res.json(buildConfig(req.resident, req.condo)));
 
 r.get('/notices', (req, res) => res.json(noticeRows(req.resident, 0, 50)));

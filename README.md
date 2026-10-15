@@ -58,6 +58,14 @@ No app (v0.3): cada aviso tem o botão **Marcar como visto** (o painel mostra *V
 
 O app consulta o servidor a cada ~10 s (serviço em primeiro plano, com notificação fixa "Interfone conectado"): traz avisos, mensagens do chat e mudanças de configuração, e mantém o ramal registrado para receber chamadas.
 
+## Liberação de visitas
+
+1. No app, **Liberar visita** → o morador gera um link (`http://SERVIDOR:9670/v/…`, válido por 7 dias ou até a data prevista + 1 dia) e envia ao visitante pelo WhatsApp/SMS.
+2. O visitante abre o link no celular e informa **nome, CPF ou RG, veículo e placa (opcionais), telefone** e tira a **foto** (abre a câmera frontal). Pode enviar sem foto: a portaria confere na chegada.
+3. No painel (**Visitas**) o porteiro vê os cadastros, abre os detalhes (com foto), e usa **Liberar entrada / Recusar / Registrar saída**. O morador recebe um aviso a cada etapa. O porteiro também pode cadastrar visitantes na hora ou gerar links.
+
+Dados pessoais (LGPD): fotos e documentos só saem por rotas autenticadas; visitas são apagadas automaticamente após 90 dias (`VISIT_RETENTION_DAYS`). Se o servidor estiver atrás de um domínio/proxy, defina `PUBLIC_URL` para os links saírem com o endereço certo.
+
 ## Telefone do operador no navegador (requisitos no Issabel)
 
 O painel usa JsSIP (SIP sobre WebSocket + WebRTC). No Issabel/Asterisk é preciso: transporte **WSS** habilitado (porta 8089, `/ws`), ramal **PJSIP** com `webrtc=yes` (Asterisk 16+, Issabel 5) e a URL `wss://IP:8089/ws` informada no condomínio. O navegador precisa aceitar o certificado do Issabel (abra `https://IP:8089/ws` uma vez). Issabel 4 (Asterisk 11) normalmente **não** suporta WebRTC.
@@ -65,7 +73,7 @@ O painel usa JsSIP (SIP sobre WebSocket + WebRTC). No Issabel/Asterisk é precis
 ## Testes
 
 ```bash
-cd server && npm ci && npm test   # 33 verificações de ponta a ponta (API, permissões, isolamento, app, chat, aviso visto, mídia, dispositivos, HTTPS)
+cd server && npm ci && npm test   # 34 verificações de ponta a ponta (API, permissões, isolamento, app, chat, aviso visto, mídia, dispositivos, HTTPS)
 ```
 O CI também constrói a imagem Docker e sobe o container nas portas 9670 e 9671.
 

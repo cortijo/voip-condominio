@@ -100,6 +100,28 @@ object Api {
         try { if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null } finally { c.disconnect() }
     } catch (e: Exception) { null }
 
+    fun visits(server: String, token: String): List<Visit> {
+        val a = JSONArray(request(server, "GET", "/api/app/visitors", token, null))
+        return (0 until a.length()).map { parseVisit(a.getJSONObject(it)) }
+    }
+
+    fun createVisit(server: String, token: String, name: String, isoDate: String): Visit {
+        val body = JSONObject().put("name", name).put("visit_date", isoDate)
+        return parseVisit(JSONObject(request(server, "POST", "/api/app/visitors", token, body)))
+    }
+
+    fun cancelVisit(server: String, token: String, id: Long) {
+        request(server, "POST", "/api/app/visitors/$id/cancel", token, JSONObject())
+    }
+
+    private fun parseVisit(x: JSONObject) = Visit(
+        id = x.getLong("id"), status = x.optString("status", ""), name = x.optString("name", ""),
+        docType = x.optString("doc_type", ""), document = x.optString("document", ""), phone = x.optString("phone", ""),
+        vehicle = x.optString("vehicle", ""), plate = x.optString("plate", ""), visitDate = x.optString("visit_date", ""),
+        link = x.optString("link", ""), hasPhoto = x.optBoolean("has_photo", false), expired = x.optBoolean("expired", false),
+        createdAt = x.optLong("created_at", 0)
+    )
+
     fun poll(server: String, token: String, n: Long, m: Long): PollResult {
         val o = JSONObject(request(server, "GET", "/api/app/poll?n=$n&m=$m", token, null))
         return PollResult(o.getString("version"), parseNotices(o.getJSONArray("notices")), parseMessages(o.getJSONArray("messages")))

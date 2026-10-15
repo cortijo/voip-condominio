@@ -30,7 +30,7 @@ app.use((req, res, next) => {
 // Corpo JSON pequeno por padrão. As rotas de upload (…/media e …/logo) usam parser maior
 // próprio, aplicado DEPOIS da autenticação.
 const jsonSmall = express.json({ limit: '256kb' });
-app.use((req, res, next) => (/\/(media|logo)$/.test(req.path) ? next() : jsonSmall(req, res, next)));
+app.use((req, res, next) => (/\/(media|logo|photo)$/.test(req.path) || req.path.startsWith('/api/public/') ? next() : jsonSmall(req, res, next)));
 
 app.use('/media', express.static(UPLOADS_DIR, {
   maxAge: '1h',
@@ -42,6 +42,9 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/app', require('./routes/app'));
+app.use('/api/public', require('./routes/visits').pub);
+// página pública do visitante (link enviado pelo morador)
+app.get('/v/:token', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'visita.html')));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrada.' }));

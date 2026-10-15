@@ -205,6 +205,41 @@ async function waitUp() {
   assert.notStrictEqual(auto.body.code, auto2.body.code);
   step('portaria sempre disponível ao morador; ID do condomínio é gerado automaticamente');
 
+  // visitas
+  const iv = await call('POST', '/api/app/visitors', { name: 'Carlos', visit_date: '2030-01-10' }, T);
+  ok(iv, 'convite'); assert.match(iv.body.link, /\/v\/[0-9a-f]{32}$/); assert.strictEqual(iv.body.status, 'aguardando');
+  const vt = iv.body.link.split('/v/')[1];
+  const pv = await call('GET', `/api/public/visit/${vt}`);
+  assert.strictEqual(pv.body.editable, true); assert.strictEqual(pv.body.condo.name, 'Condomínio Teste');
+  code(await call('GET', '/api/public/visit/' + 'a'.repeat(32)), 404, 'token inexistente');
+  const good = { name: 'Carlos Pereira', doc_type: 'CPF', document: '52998224725', phone: '(79) 99999-1234', vehicle: 'Fiat Uno', plate: 'abc-1d23' };
+  code(await call('POST', `/api/public/visit/${vt}`, { ...good, document: '11111111111' }), 400, 'cpf inválido');
+  code(await call('POST', `/api/public/visit/${vt}`, { ...good, plate: 'XX' }), 400, 'placa inválida');
+  code(await call('POST', `/api/public/visit/${vt}`, { ...good, phone: '123' }), 400, 'telefone inválido');
+  code(await call('POST', `/api/public/visit/${vt}`, { ...good, photo: Buffer.from('<svg/>').toString('base64') }), 400, 'foto inválida');
+  ok(await call('POST', `/api/public/visit/${vt}`, { ...good, photo: jpg.toString('base64') }), 'cadastro do visitante');
+  const mine = (await call('GET', '/api/app/visitors', null, T)).body[0];
+  assert.deepStrictEqual([mine.status, mine.name, mine.document, mine.plate, mine.has_photo], ['cadastrado', 'Carlos Pereira', '529.982.247-25', 'ABC1D23', true]);
+  assert.ok((await call('GET', '/api/app/notices', null, T)).body.some((x) => x.title === 'Visitante cadastrado'));
+  assert.strictEqual((await raw(`/api/app/visitors/${mine.id}/photo`, T)).status, 200);
+  assert.strictEqual((await raw(`/api/app/visitors/${mine.id}/photo`, TJ)).status, 404, 'foto só do dono');
+  const pl = (await call('GET', `/api/admin/condos/${cid}/visitors?status=cadastrado`, null, O)).body;
+  assert.strictEqual(pl.length, 1);
+  assert.strictEqual((await raw(`/api/admin/condos/${cid}/visitors/${mine.id}/photo`, O)).status, 200);
+  code(await call('GET', `/api/admin/condos/${c2.body.id}/visitors`, null, O), 403, 'outro condomínio');
+  code(await call('POST', `/api/admin/condos/${cid}/visitors/${mine.id}/action`, { action: 'saida' }, O), 400, 'saída sem liberar');
+  ok(await call('POST', `/api/admin/condos/${cid}/visitors/${mine.id}/action`, { action: 'liberar' }, O), 'liberar');
+  assert.strictEqual((await call('GET', '/api/app/visitors', null, T)).body[0].status, 'liberado');
+  code(await call('POST', `/api/public/visit/${vt}`, good), 410, 'link após liberação');
+  ok(await call('POST', `/api/admin/condos/${cid}/visitors/${mine.id}/action`, { action: 'saida' }, O), 'saída');
+  const walk = await call('POST', `/api/admin/condos/${cid}/visitors`, { name: 'Entregador', document: '1234567', doc_type: 'RG', phone: '7933334444' }, O);
+  ok(walk, 'visita na portaria'); assert.strictEqual(walk.body.status, 'cadastrado');
+  const lk = await call('POST', `/api/admin/condos/${cid}/visitors`, { resident_id: rs.body.id }, O);
+  assert.strictEqual(lk.body.status, 'aguardando');
+  ok(await call('POST', `/api/app/visitors/${(await call('POST', '/api/app/visitors', {}, T)).body.id}/cancel`, {}, T), 'morador cancela');
+  ok(await call('DELETE', `/api/admin/condos/${cid}/visitors/${walk.body.id}`, null, O), 'excluir');
+  step('visitas: link do morador, cadastro público com validação, notificação, validação pelo porteiro, isolamento');
+
   // HTTPS
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   let hs = 0;
