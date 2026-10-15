@@ -52,17 +52,23 @@ data class Notice(
     val kind: String,
     val title: String,
     val body: String,
-    val createdAt: Long
-)
+    val createdAt: Long,
+    val seenAt: Long = 0          // 0 = ainda não marcado como visto
+) {
+    val seen: Boolean get() = seenAt > 0
+}
 
 data class ChatMessage(
     val id: Long,
     val sender: String,          // "resident" | "operator"
     val operatorName: String,
     val body: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val kind: String = "text"     // "text" | "image" | "audio"
 ) {
     val fromOperator: Boolean get() = sender == "operator"
+    val preview: String
+        get() = when (kind) { "image" -> "📷 Foto"; "audio" -> "🎤 Áudio"; else -> body }
 }
 
 data class BrandColors(

@@ -31,7 +31,8 @@ object Repo {
     var config by mutableStateOf<Provisioned?>(null)
     var logo by mutableStateOf<ImageBitmap?>(null)
     var syncStatus by mutableStateOf("")
-    var unreadNotices by mutableIntStateOf(0)
+    /** Avisos que o morador ainda não marcou como vistos (selo da aba Avisos). */
+    val unreadNotices: Int get() = notices.count { !it.seen }
     var unreadChat by mutableIntStateOf(0)
     val notices = mutableStateListOf<Notice>()      // mais recentes primeiro
     val chat = mutableStateListOf<ChatMessage>()    // mais antigas primeiro
@@ -53,6 +54,8 @@ object Repo {
         if (::ctx.isInitialized) return
         ctx = context.applicationContext
         store = Store(ctx)
+        Api.appVersion = try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "" } catch (e: Exception) { "" }
+        Api.sipState = { if (config?.sip == null) "none" else if (SipManager.registered) "ok" else "fail" }
         Notifier.ensureChannels(ctx)
         SipManager.init(ctx)
         if (store.token.isNotBlank() && store.configJson.isNotBlank()) {
@@ -85,7 +88,7 @@ object Repo {
         noticeCursor = 0; chatCursor = 0
         store.noticeCursor = 0; store.chatCursor = 0
         notices.clear(); chat.clear()
-        unreadNotices = 0; unreadChat = 0
+        unreadChat = 0
         lastVersion = ""
         applyConfig(parsed)
         loggedIn = true
@@ -107,7 +110,8 @@ object Repo {
         lastVersion = ""
         lastLogoUrl = null
         notices.clear(); chat.clear()
-        unreadNotices = 0; unreadChat = 0
+        unreadChat = 0
+        clearMediaCache()
         Brand.apply(BrandColors())
         SipManager.register(SipConfig())
         try { ctx.stopService(Intent(ctx, SyncService::class.java)) } catch (e: Exception) { /* ignora */ }
@@ -225,7 +229,6 @@ object Repo {
     // ------------------------------------------------------------------ eventos
 
     private fun onNewNotice(n: Notice) {
-        unreadNotices++
         if (!appInForeground) Notifier.notice(ctx, n)
     }
 
@@ -234,6 +237,37 @@ object Repo {
         if (!appInForeground) Notifier.chat(ctx, m)
     }
 
-    fun markNoticesSeen() { unreadNotices = 0 }
+    /** Marca o aviso como visto no servidor (o painel do operador passa a mostrar). */
+    suspend fun markSeen(n: Notice) {
+        val srv = store.server
+        val tk = store.token
+        val at = withContext(Dispatchers.IO) { Api.markSeen(srv, tk, n.id) }
+        val i = notices.indexOfFirst { it.id == n.id }
+        if (i >= 0) notices[i] = notices[i].copy(seenAt = if (at > 0) at else System.currentTimeMillis() / 1000)
+    }
+
+    suspend fun sendMedia(kind: String, bytes: ByteArray) {
+        val srv = store.server
+        val tk = store.token
+        withContext(Dispatchers.IO) { Api.sendMedia(srv, tk, kind, bytes) }
+        poll()
+    }
+
+    private fun mediaDir() = java.io.File(ctx.cacheDir, "chat").apply { mkdirs() }
+
+    private fun clearMediaCache() {
+        try { mediaDir().listFiles()?.forEach { it.delete() } } catch (e: Exception) { /* ignora */ }
+    }
+
+    /** Arquivo local (em cache) do anexo; baixa do servidor na primeira vez. */
+    suspend fun mediaFile(m: ChatMessage): java.io.File? {
+        val srv = store.server
+        val tk = store.token
+        val f = java.io.File(mediaDir(), "${m.id}.${if (m.kind == "audio") "m4a" else "jpg"}")
+        if (f.exists() && f.length() > 0) return f
+        return withContext(Dispatchers.IO) {
+            Api.fetchAuth(srv, tk, "/api/app/chat/file/${m.id}")?.let { f.writeBytes(it); f }
+        }
+    }
     fun markChatSeen() { unreadChat = 0 }
 }

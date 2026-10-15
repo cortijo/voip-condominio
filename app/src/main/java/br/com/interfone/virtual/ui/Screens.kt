@@ -1,6 +1,31 @@
 package br.com.interfone.virtual.ui
 
 import android.widget.Toast
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.media.MediaPlayer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
+import br.com.interfone.virtual.AudioRecorder
+import br.com.interfone.virtual.MediaUtil
+import br.com.interfone.virtual.Notice
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -58,6 +84,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -141,6 +168,20 @@ fun Avatar(size: Int = 96) {
                 fontSize = (size / 2.4).sp, fontWeight = FontWeight.Bold, color = Accent
             )
         }
+    }
+}
+
+/** Logotipo do condomínio: grande, sem moldura. Sem logo, cai para a inicial em círculo. */
+@Composable
+fun BrandLogo() {
+    val logo = Repo.logo
+    if (logo != null) {
+        Image(
+            logo, null, contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxWidth(0.8f).heightIn(max = 170.dp)
+        )
+    } else {
+        Avatar(112)
     }
 }
 
@@ -240,13 +281,15 @@ fun HomeScreen(nav: Nav) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Header("Interfone Virtual")
         Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Avatar()
-            Spacer(Modifier.height(10.dp))
-            Text(cfg.condoName, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = TextC)
+            BrandLogo()
+            Spacer(Modifier.height(12.dp))
             Text(
-                listOf(cfg.residentName, where).filter { it.isNotBlank() }.joinToString(" — "),
-                fontSize = 13.sp, color = Muted
+                cfg.condoName, fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, color = TextC,
+                textAlign = TextAlign.Center, lineHeight = 30.sp, modifier = Modifier.padding(horizontal = 16.dp)
             )
+            Spacer(Modifier.height(4.dp))
+            Text(cfg.residentName, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, color = TextC, textAlign = TextAlign.Center)
+            if (where.isNotBlank()) Text(where, fontSize = 15.sp, color = Muted)
             Spacer(Modifier.height(4.dp))
             Text(
                 if (cfg.sip == null) "Sem ramal configurado" else SipManager.registration,
@@ -349,7 +392,9 @@ private fun kindLabel(kind: String) = when (kind) {
 
 @Composable
 fun NoticesScreen() {
-    LaunchedEffect(Repo.notices.size) { Repo.markNoticesSeen() }
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var marking by remember { mutableStateOf(setOf<Long>()) }
     Column(Modifier.fillMaxSize()) {
         Header("Mural de avisos")
         if (Repo.notices.isEmpty()) Empty("Nenhum aviso por enquanto.")
@@ -372,6 +417,25 @@ fun NoticesScreen() {
                         Spacer(Modifier.height(4.dp))
                         Text(n.body, color = TextC)
                     }
+                    Spacer(Modifier.height(10.dp))
+                    if (n.seen) {
+                        Text("✓ Visto em ${fmtTime(n.seenAt)}", fontSize = 12.sp, color = Color(0xFF66BB6A))
+                    } else {
+                        Button(
+                            enabled = n.id !in marking,
+                            onClick = {
+                                marking = marking + n.id
+                                scope.launch {
+                                    try { Repo.markSeen(n) } catch (e: Exception) {
+                                        Toast.makeText(ctx, e.message ?: "Falha ao marcar como visto", Toast.LENGTH_SHORT).show()
+                                    }
+                                    marking = marking - n.id
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("MARCAR COMO VISTO", fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
         }
@@ -381,8 +445,79 @@ fun NoticesScreen() {
 // ---------------------------------------------------------------- conversas (chat com a portaria)
 
 @Composable
+private fun ImageBubble(m: ChatMessage) {
+    var bmp by remember(m.id) { mutableStateOf<ImageBitmap?>(null) }
+    var failed by remember(m.id) { mutableStateOf(false) }
+    var zoom by remember { mutableStateOf(false) }
+    LaunchedEffect(m.id) {
+        val f = Repo.mediaFile(m)
+        val b = if (f == null) null else withContext(Dispatchers.IO) { BitmapFactory.decodeFile(f.path)?.asImageBitmap() }
+        if (b == null) failed = true else bmp = b
+    }
+    val img = bmp
+    when {
+        img != null -> Image(
+            img, "Foto", contentScale = ContentScale.Fit,
+            modifier = Modifier.widthIn(max = 240.dp).heightIn(max = 280.dp).clip(RoundedCornerShape(10.dp)).clickable { zoom = true }
+        )
+        failed -> Text("Imagem indisponível", color = Muted, fontSize = 12.sp)
+        else -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = Accent)
+    }
+    if (zoom && img != null) {
+        Dialog(onDismissRequest = { zoom = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(Modifier.fillMaxSize().background(Color.Black).clickable { zoom = false }, contentAlignment = Alignment.Center) {
+                Image(img, "Foto", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            }
+        }
+    }
+}
+
+@Composable
+private fun AudioBubble(m: ChatMessage, color: Color) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var playing by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
+    val holder = remember { arrayOfNulls<MediaPlayer>(1) }
+    DisposableEffect(m.id) { onDispose { try { holder[0]?.release() } catch (e: Exception) { /* ignora */ }; holder[0] = null } }
+    Row(
+        Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = !loading) {
+            val cur = holder[0]
+            if (cur != null && playing) {
+                try { cur.pause() } catch (e: Exception) { /* ignora */ }
+                playing = false
+            } else scope.launch {
+                loading = true
+                val f = Repo.mediaFile(m)
+                loading = false
+                if (f == null) {
+                    Toast.makeText(ctx, "Não foi possível baixar o áudio", Toast.LENGTH_SHORT).show()
+                } else try {
+                    val p = holder[0] ?: MediaPlayer().apply {
+                        setDataSource(f.path)
+                        prepare()
+                        setOnCompletionListener { playing = false; it.seekTo(0) }
+                    }.also { holder[0] = it }
+                    p.start()
+                    playing = true
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "Não foi possível tocar o áudio", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (loading) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = color)
+        else Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Pausar" else "Tocar", tint = color, modifier = Modifier.size(30.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("Mensagem de voz", color = color)
+    }
+}
+
+@Composable
 private fun Bubble(m: ChatMessage) {
     val mine = !m.fromOperator
+    val fg = if (mine) OnAccent else TextC
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
         Column(
@@ -390,7 +525,11 @@ private fun Bubble(m: ChatMessage) {
                 .background(if (mine) Accent else Surface1).padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
             if (!mine) Text(m.operatorName.ifBlank { "Portaria" }, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Accent)
-            Text(m.body, color = if (mine) OnAccent else TextC)
+            when (m.kind) {
+                "image" -> ImageBubble(m)
+                "audio" -> AudioBubble(m, fg)
+                else -> Text(m.body, color = fg)
+            }
             Text(fmtTime(m.createdAt), fontSize = 10.sp, color = if (mine) OnAccent.copy(alpha = 0.7f) else Muted)
         }
     }
@@ -402,12 +541,59 @@ fun ChatScreen() {
     val listState = rememberLazyListState()
     var text by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    var recording by remember { mutableStateOf(false) }
+    var seconds by remember { mutableStateOf(0) }
     val ctx = LocalContext.current
 
     LaunchedEffect(Repo.chat.size) {
         Repo.markChatSeen()
         if (Repo.chat.isNotEmpty()) listState.scrollToItem(max(0, Repo.chat.size - 1))
     }
+
+    fun sendMedia(kind: String, make: suspend () -> ByteArray?) {
+        sending = true
+        scope.launch {
+            try {
+                val bytes = withContext(Dispatchers.IO) { make() }
+                if (bytes != null) Repo.sendMedia(kind, bytes)
+            } catch (e: Exception) {
+                Toast.makeText(ctx, e.message ?: "Falha ao enviar", Toast.LENGTH_SHORT).show()
+            }
+            sending = false
+        }
+    }
+
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) sendMedia("image") { MediaUtil.imageToJpeg(ctx, uri) }
+    }
+
+    fun finishRecording(send: Boolean) {
+        recording = false
+        val bytes = AudioRecorder.stop()
+        if (send) {
+            if (bytes == null) Toast.makeText(ctx, "Áudio muito curto", Toast.LENGTH_SHORT).show()
+            else sendMedia("audio") { bytes }
+        }
+    }
+
+    fun startRecording() {
+        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Repo.requestMic?.invoke()
+            Toast.makeText(ctx, "Permita o uso do microfone e toque novamente.", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (SipManager.callStatus != SipManager.CallStatus.NONE) {
+            Toast.makeText(ctx, "Termine a chamada antes de gravar.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (AudioRecorder.start(ctx) { scope.launch { finishRecording(true) } }) { seconds = 0; recording = true }
+        else Toast.makeText(ctx, "Não foi possível gravar.", Toast.LENGTH_SHORT).show()
+    }
+
+    LaunchedEffect(recording) {
+        while (recording) { delay(1000); seconds++ }
+    }
+    DisposableEffect(Unit) { onDispose { if (AudioRecorder.isRecording) AudioRecorder.cancel() } }
 
     Column(Modifier.fillMaxSize()) {
         Header("Conversas")
@@ -418,26 +604,53 @@ fun ChatScreen() {
                 items(Repo.chat, key = { it.id }) { Bubble(it) }
             }
         }
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                text, { text = it }, placeholder = { Text("Mensagem") }, modifier = Modifier.weight(1f), maxLines = 4
-            )
-            IconButton(
-                enabled = text.isNotBlank() && !sending,
-                onClick = {
-                    val body = text.trim()
-                    sending = true
-                    scope.launch {
-                        try {
-                            Repo.sendChat(body)
-                            text = ""
-                        } catch (e: Exception) {
-                            Toast.makeText(ctx, e.message ?: "Falha ao enviar", Toast.LENGTH_SHORT).show()
-                        }
-                        sending = false
-                    }
+        if (recording) {
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { finishRecording(false) }) { Icon(Icons.Default.Close, "Cancelar", tint = Red) }
+                Text(
+                    "● Gravando  %d:%02d".format(seconds / 60, seconds % 60),
+                    color = Red, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
+                )
+                Button(
+                    onClick = { finishRecording(true) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent)
+                ) {
+                    Icon(Icons.Default.Send, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("ENVIAR")
                 }
-            ) { Icon(Icons.Default.Send, "Enviar", tint = if (text.isNotBlank()) Accent else Muted) }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(enabled = !sending, onClick = { pickImage.launch("image/*") }) {
+                    Icon(Icons.Default.PhotoCamera, "Enviar foto", tint = Accent)
+                }
+                OutlinedTextField(
+                    text, { text = it }, placeholder = { Text("Mensagem") }, modifier = Modifier.weight(1f), maxLines = 4
+                )
+                if (text.isBlank()) {
+                    IconButton(enabled = !sending, onClick = { startRecording() }) {
+                        Icon(Icons.Default.Mic, "Gravar áudio", tint = Accent)
+                    }
+                } else {
+                    IconButton(
+                        enabled = !sending,
+                        onClick = {
+                            val body = text.trim()
+                            sending = true
+                            scope.launch {
+                                try {
+                                    Repo.sendChat(body)
+                                    text = ""
+                                } catch (e: Exception) {
+                                    Toast.makeText(ctx, e.message ?: "Falha ao enviar", Toast.LENGTH_SHORT).show()
+                                }
+                                sending = false
+                            }
+                        }
+                    ) { Icon(Icons.Default.Send, "Enviar", tint = Accent) }
+                }
+            }
         }
     }
 }

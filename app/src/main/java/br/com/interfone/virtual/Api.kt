@@ -11,6 +11,11 @@ class ApiException(message: String, val code: Int) : Exception(message)
 
 /** Cliente HTTP do servidor de aprovisionamento. Funções bloqueantes: chamar fora da thread principal. */
 object Api {
+    /** Preenchidos pelo Repo: o painel do operador mostra versão, aparelho e estado do ramal. */
+    @Volatile var appVersion: String = ""
+    @Volatile var sipState: () -> String = { "none" }
+
+    private fun ascii(s: String) = s.filter { it.code in 32..126 }.take(60)
 
     fun normalizeServer(input: String): String {
         var s = input.trim().trimEnd('/')
@@ -18,7 +23,7 @@ object Api {
         return s
     }
 
-    private fun request(server: String, method: String, path: String, token: String?, body: JSONObject?): String {
+    private fun request(server: String, method: String, path: String, token: String?, body: JSONObject?, timeout: Int = 12000): String {
         val conn = try {
             URL(server + path).openConnection() as HttpURLConnection
         } catch (e: Exception) {
@@ -27,9 +32,14 @@ object Api {
         try {
             conn.requestMethod = method
             conn.connectTimeout = 8000
-            conn.readTimeout = 12000
+            conn.readTimeout = timeout
             conn.setRequestProperty("Accept", "application/json")
-            if (token != null) conn.setRequestProperty("Authorization", "Bearer $token")
+            if (token != null) {
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                conn.setRequestProperty("X-App-Version", ascii(appVersion))
+                conn.setRequestProperty("X-Device", ascii("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"))
+                conn.setRequestProperty("X-Sip", ascii(try { sipState() } catch (e: Exception) { "none" }))
+            }
             if (body != null) {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -68,6 +78,27 @@ object Api {
     fun sendChat(server: String, token: String, text: String) {
         request(server, "POST", "/api/app/chat", token, JSONObject().put("body", text))
     }
+
+    /** Marca o aviso como visto; devolve o instante (segundos) registrado pelo servidor. */
+    fun markSeen(server: String, token: String, id: Long): Long {
+        val o = JSONObject(request(server, "POST", "/api/app/notices/$id/seen", token, JSONObject()))
+        return o.optLong("seen_at", System.currentTimeMillis() / 1000)
+    }
+
+    /** Envia foto (JPEG) ou áudio (m4a) para o chat. */
+    fun sendMedia(server: String, token: String, kind: String, bytes: ByteArray) {
+        val data = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        request(server, "POST", "/api/app/chat/media", token, JSONObject().put("kind", kind).put("data", data), 60000)
+    }
+
+    /** Baixa um anexo do chat (rota autenticada). */
+    fun fetchAuth(server: String, token: String, path: String): ByteArray? = try {
+        val c = URL(server + path).openConnection() as HttpURLConnection
+        c.connectTimeout = 8000
+        c.readTimeout = 30000
+        c.setRequestProperty("Authorization", "Bearer $token")
+        try { if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null } finally { c.disconnect() }
+    } catch (e: Exception) { null }
 
     fun poll(server: String, token: String, n: Long, m: Long): PollResult {
         val o = JSONObject(request(server, "GET", "/api/app/poll?n=$n&m=$m", token, null))
@@ -141,11 +172,11 @@ object Api {
 
     private fun parseNotices(a: JSONArray) = (0 until a.length()).map {
         val x = a.getJSONObject(it)
-        Notice(x.getLong("id"), x.optString("kind", "aviso"), x.optString("title", ""), x.optString("body", ""), x.optLong("created_at", 0))
+        Notice(x.getLong("id"), x.optString("kind", "aviso"), x.optString("title", ""), x.optString("body", ""), x.optLong("created_at", 0), x.optLong("seen_at", 0))
     }
 
     private fun parseMessages(a: JSONArray) = (0 until a.length()).map {
         val x = a.getJSONObject(it)
-        ChatMessage(x.getLong("id"), x.optString("sender", ""), x.optString("operator_name", ""), x.optString("body", ""), x.optLong("created_at", 0))
+        ChatMessage(x.getLong("id"), x.optString("sender", ""), x.optString("operator_name", ""), x.optString("body", ""), x.optLong("created_at", 0), x.optString("kind", "text").ifBlank { "text" })
     }
 }
