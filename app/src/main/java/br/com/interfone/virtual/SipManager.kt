@@ -29,6 +29,7 @@ object SipManager {
     private var core: Core? = null
     private var current: Call? = null
     private var domain: String = ""
+    private var appCtx: Context? = null
 
     private val listener = object : CoreListenerStub() {
         override fun onAccountRegistrationStateChanged(
@@ -49,8 +50,10 @@ object SipManager {
             when (state) {
                 Call.State.IncomingReceived -> {
                     current = call
-                    peer = call.remoteAddress.displayName ?: call.remoteAddress.username ?: "Chamada"
+                    val num = call.remoteAddress.username
+                    peer = Repo.labelFor(num) ?: call.remoteAddress.displayName ?: num ?: "Chamada"
                     callStatus = CallStatus.INCOMING
+                    appCtx?.let { Notifier.incomingCall(it, peer) }
                 }
                 Call.State.OutgoingInit,
                 Call.State.OutgoingProgress,
@@ -59,8 +62,12 @@ object SipManager {
                     current = call
                     callStatus = CallStatus.OUTGOING
                 }
-                Call.State.Connected, Call.State.StreamsRunning -> callStatus = CallStatus.CONNECTED
+                Call.State.Connected, Call.State.StreamsRunning -> {
+                    callStatus = CallStatus.CONNECTED
+                    appCtx?.let { Notifier.cancelCall(it) }
+                }
                 Call.State.End, Call.State.Error, Call.State.Released -> {
+                    appCtx?.let { Notifier.cancelCall(it) }
                     if (call == current || current == null) resetCall()
                 }
                 else -> {}
@@ -81,6 +88,7 @@ object SipManager {
 
     fun init(context: Context) {
         if (core != null) return
+        appCtx = context.applicationContext
         val factory = Factory.instance()
         factory.setDebugMode(false, "Interfone")
         val c = factory.createCore(null, null, context.applicationContext)

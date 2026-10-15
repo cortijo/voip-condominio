@@ -1,77 +1,39 @@
 package br.com.interfone.virtual
 
 import android.content.Context
-import org.json.JSONArray
-import org.json.JSONObject
 
-/** Armazenamento local simples (SharedPreferences + JSON). */
+const val DEFAULT_SERVER = "http://45.224.165.42:9670"
+
+/** Preferências locais: dados de login, última configuração (uso offline) e cursores de avisos/chat. */
 class Store(context: Context) {
-    private val sp = context.getSharedPreferences("interfone", Context.MODE_PRIVATE)
+    private val sp = context.getSharedPreferences("interfone_v2", Context.MODE_PRIVATE)
 
-    fun loadSip(): SipConfig = SipConfig(
-        displayName = sp.getString("sip_name", "") ?: "",
-        user = sp.getString("sip_user", "") ?: "",
-        password = sp.getString("sip_pass", "") ?: "",
-        domain = sp.getString("sip_domain", "") ?: "",
-        port = sp.getInt("sip_port", 5060),
-        portariaExt = sp.getString("sip_portaria", "") ?: "",
-        transport = sp.getString("sip_transport", "UDP") ?: "UDP"
-    )
+    private fun str(key: String, def: String = "") = sp.getString(key, def) ?: def
 
-    fun saveSip(c: SipConfig) {
-        sp.edit()
-            .putString("sip_name", c.displayName)
-            .putString("sip_user", c.user)
-            .putString("sip_pass", c.password)
-            .putString("sip_domain", c.domain)
-            .putInt("sip_port", c.port)
-            .putString("sip_portaria", c.portariaExt)
-            .putString("sip_transport", c.transport)
-            .apply()
-    }
+    var server: String
+        get() = str("server", DEFAULT_SERVER)
+        set(v) { sp.edit().putString("server", v).apply() }
+    var code: String
+        get() = str("code")
+        set(v) { sp.edit().putString("code", v).apply() }
+    var username: String
+        get() = str("username")
+        set(v) { sp.edit().putString("username", v).apply() }
+    var token: String
+        get() = str("token")
+        set(v) { sp.edit().putString("token", v).apply() }
+    var configJson: String
+        get() = str("config")
+        set(v) { sp.edit().putString("config", v).apply() }
+    var noticeCursor: Long
+        get() = sp.getLong("n_cursor", 0)
+        set(v) { sp.edit().putLong("n_cursor", v).apply() }
+    var chatCursor: Long
+        get() = sp.getLong("m_cursor", 0)
+        set(v) { sp.edit().putLong("m_cursor", v).apply() }
 
-    fun loadCameras(): List<Camera> = readArray("cameras") {
-        Camera(
-            id = it.getString("id"),
-            name = it.getString("name"),
-            url = it.getString("url"),
-            user = it.optString("user"),
-            password = it.optString("password")
-        )
-    }
-
-    fun saveCameras(list: List<Camera>) = writeArray("cameras", list) {
-        JSONObject()
-            .put("id", it.id).put("name", it.name).put("url", it.url)
-            .put("user", it.user).put("password", it.password)
-    }
-
-    fun loadResidents(): List<Resident> = readArray("residents") {
-        Resident(
-            id = it.getString("id"),
-            block = it.getString("block"),
-            name = it.getString("name"),
-            ext = it.getString("ext")
-        )
-    }
-
-    fun saveResidents(list: List<Resident>) = writeArray("residents", list) {
-        JSONObject().put("id", it.id).put("block", it.block).put("name", it.name).put("ext", it.ext)
-    }
-
-    private fun <T> readArray(key: String, parse: (JSONObject) -> T): List<T> {
-        val raw = sp.getString(key, null) ?: return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            (0 until arr.length()).map { parse(arr.getJSONObject(it)) }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun <T> writeArray(key: String, list: List<T>, toJson: (T) -> JSONObject) {
-        val arr = JSONArray()
-        list.forEach { arr.put(toJson(it)) }
-        sp.edit().putString(key, arr.toString()).apply()
+    /** Apaga a sessão (mantém servidor, código e usuário para facilitar o próximo login). */
+    fun clearSession() {
+        sp.edit().remove("token").remove("config").remove("n_cursor").remove("m_cursor").apply()
     }
 }

@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   build:
+    name: APK Android
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,3 +45,43 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/debug/*.apk
+
+  server:
+    name: Servidor (testes + Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Testes do servidor
+        working-directory: server
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci 2>&1 | tail -3
+          npm test 2>&1 | tee test.log || {
+            grep -E "FALHOU|Error|esperado|assert" test.log | head -20 | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+            exit 1
+          }
+
+      - name: Construir imagem Docker
+        shell: bash
+        run: |
+          docker build -t interfone-server server 2>&1 | tee docker.log || {
+            tail -25 docker.log | while IFS= read -r l; do echo "::error::${l:0:400}"; done
+            exit 1
+          }
+
+      - name: Subir o container e checar a porta 9670
+        shell: bash
+        run: |
+          docker run -d --name interfone -p 9670:9670 -e ADMIN_PASSWORD=SenhaDeTeste123 interfone-server
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:9670/health && break; sleep 1; done
+          curl -sf http://127.0.0.1:9670/health || { docker logs interfone 2>&1 | tail -20 | while IFS= read -r l; do echo "::error::${l:0:300}"; done; exit 1; }
+          curl -sf http://127.0.0.1:9670/ | grep -q "Interfone Virtual"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:9670/api/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"SenhaDeTeste123"}')
+          test "$code" = "200"
+          echo "container respondendo na 9670 e login do admin primário OK"

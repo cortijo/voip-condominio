@@ -55,13 +55,13 @@ fun CallScreen() {
         ) {
             Text(
                 SipManager.peer.take(1).uppercase().ifBlank { "?" },
-                fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Orange
+                fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Accent
             )
         }
         Spacer(Modifier.height(16.dp))
-        Text(SipManager.peer, fontSize = 22.sp, fontWeight = FontWeight.Medium, color = Color.White)
+        Text(SipManager.peer, fontSize = 22.sp, fontWeight = FontWeight.Medium, color = TextC)
         Spacer(Modifier.height(8.dp))
-        Text(statusText, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(statusText, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextC)
 
         Spacer(Modifier.weight(1f))
 
@@ -92,9 +92,9 @@ private fun SmallAction(icon: ImageVector, label: String, active: Boolean, onCli
         Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, label, tint = if (active) Orange else Color.White)
+        Icon(icon, label, tint = if (active) Accent else TextC)
         Spacer(Modifier.height(4.dp))
-        Text(label, fontSize = 10.sp, color = if (active) Orange else Color.White)
+        Text(label, fontSize = 10.sp, color = if (active) Accent else TextC)
     }
 }
 
@@ -104,6 +104,6 @@ private fun RoundButton(icon: ImageVector, color: Color, onClick: () -> Unit) {
         Modifier.size(68.dp).clip(CircleShape).background(color).clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(icon, null, tint = Color.White, modifier = Modifier.size(30.dp))
+        Icon(icon, null, tint = TextC, modifier = Modifier.size(30.dp))
     }
 }

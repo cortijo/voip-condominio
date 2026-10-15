@@ -1,0 +1,20 @@
+services:
+  interfone-server:
+    build: ./server
+    container_name: interfone-server
+    restart: unless-stopped
+    ports:
+      - "9670:9670"
+    environment:
+      # Usados somente na PRIMEIRA execução, para criar o administrador primário.
+      # Se ADMIN_PASSWORD ficar vazio (ou < 8 caracteres), uma senha aleatória é gerada
+      # e exibida UMA vez em "docker logs interfone-server".
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Defina como 1 se houver um proxy reverso (nginx/Caddy) na frente.
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+    volumes:
+      - interfone-data:/data
+
+volumes:
+  interfone-data:

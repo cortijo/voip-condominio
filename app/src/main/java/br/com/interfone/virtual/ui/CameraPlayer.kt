@@ -2,6 +2,7 @@
 
 package br.com.interfone.virtual.ui
 
+import android.util.Base64
 import android.view.ViewGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -23,27 +24,41 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import br.com.interfone.virtual.Camera
 
-/** Player de câmera: RTSP (via TCP) ou HLS/HTTP. */
+/** Player de câmera: RTSP (via TCP) ou HLS/HTTP (com autenticação Basic quando houver usuário). */
 @Composable
-fun CameraPlayer(url: String, modifier: Modifier = Modifier) {
+fun CameraPlayer(camera: Camera, modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
-    var error by remember(url) { mutableStateOf<String?>(null) }
-    val player = remember(url) {
-        ExoPlayer.Builder(ctx).build().apply {
+    var error by remember(camera.id, camera.url) { mutableStateOf<String?>(null) }
+    val player = remember(camera.id, camera.url, camera.user, camera.password) {
+        val builder = ExoPlayer.Builder(ctx)
+        if (!camera.isRtsp) {
+            val headers = if (camera.user.isNotBlank()) {
+                val token = Base64.encodeToString("${camera.user}:${camera.password}".toByteArray(), Base64.NO_WRAP)
+                mapOf("Authorization" to "Basic $token")
+            } else emptyMap()
+            val http = DefaultHttpDataSource.Factory()
+                .setAllowCrossProtocolRedirects(true)
+                .setDefaultRequestProperties(headers)
+            builder.setMediaSourceFactory(DefaultMediaSourceFactory(ctx).setDataSourceFactory(http))
+        }
+        builder.build().apply {
             addListener(object : Player.Listener {
                 override fun onPlayerError(e: PlaybackException) {
                     error = "Falha ao abrir a câmera (${e.errorCodeName})"
                 }
             })
-            val item = MediaItem.fromUri(url)
-            if (url.startsWith("rtsp", ignoreCase = true)) {
+            if (camera.isRtsp) {
+                val item = MediaItem.fromUri(camera.streamUrl())
                 setMediaSource(RtspMediaSource.Factory().setForceUseRtpTcp(true).createMediaSource(item))
             } else {
-                setMediaItem(item)
+                setMediaItem(MediaItem.fromUri(camera.url))
             }
             prepare()
             playWhenReady = true
