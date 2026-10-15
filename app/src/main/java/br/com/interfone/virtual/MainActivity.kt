@@ -43,6 +43,7 @@ import br.com.interfone.virtual.ui.CameraViewScreen
 import br.com.interfone.virtual.ui.CamerasScreen
 import br.com.interfone.virtual.ui.ChatScreen
 import br.com.interfone.virtual.ui.HomeScreen
+import br.com.interfone.virtual.ui.VisitorsScreen
 import br.com.interfone.virtual.ui.LoginScreen
 import br.com.interfone.virtual.ui.Muted
 import br.com.interfone.virtual.ui.NoticesScreen
