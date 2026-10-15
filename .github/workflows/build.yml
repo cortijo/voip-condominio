@@ -78,10 +78,12 @@ jobs:
       - name: Subir o container e checar a porta 9670
         shell: bash
         run: |
-          docker run -d --name interfone -p 9670:9670 -e ADMIN_PASSWORD=SenhaDeTeste123 interfone-server
+          docker run -d --name interfone -p 9670:9670 -p 9671:9671 -e PUBLIC_HOST=127.0.0.1 -e ADMIN_PASSWORD=SenhaDeTeste123 interfone-server
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:9670/health && break; sleep 1; done
           curl -sf http://127.0.0.1:9670/health || { docker logs interfone 2>&1 | tail -20 | while IFS= read -r l; do echo "::error::${l:0:300}"; done; exit 1; }
           curl -sf http://127.0.0.1:9670/ | grep -q "Interfone Virtual"
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:9670/api/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"SenhaDeTeste123"}')
           test "$code" = "200"
-          echo "container respondendo na 9670 e login do admin primário OK"
+          for i in $(seq 1 20); do curl -skf https://127.0.0.1:9671/health && break; sleep 1; done
+          curl -skf https://127.0.0.1:9671/health || { docker logs interfone 2>&1 | tail -20 | while IFS= read -r l; do echo "::error::${l:0:300}"; done; exit 1; }
+          echo "container respondendo na 9670 (HTTP) e 9671 (HTTPS) e login do admin primário OK"

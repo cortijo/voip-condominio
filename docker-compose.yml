@@ -7,7 +7,8 @@ services:
     container_name: interfone-server
     restart: unless-stopped
     ports:
-      - "9670:9670"
+      - "9670:9670"   # HTTP (app dos moradores)
+      - "9671:9671"   # HTTPS (painel do operador com telefone/microfone)
     environment:
       # Usados somente na PRIMEIRA execução, para criar o administrador primário.
       # Se ADMIN_PASSWORD ficar vazio (ou < 8 caracteres), uma senha aleatória é gerada
@@ -16,6 +17,9 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Defina como 1 se houver um proxy reverso (nginx/Caddy) na frente.
       TRUST_PROXY: ${TRUST_PROXY:-0}
+      # IP/domínio pelo qual o painel é acessado (entra no certificado HTTPS autoassinado). Ex: 45.224.165.42
+      PUBLIC_HOST: ${PUBLIC_HOST:-}
+      HTTPS_PORT: 9671
     volumes:
       - interfone-data:/data
 

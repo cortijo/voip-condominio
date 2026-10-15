@@ -9,7 +9,7 @@ const PORT = 19670;
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'interfone-test-'));
 const srv = spawn('node', [path.join(__dirname, '..', 'src', 'index.js')], {
-  env: { ...process.env, PORT: String(PORT), DATA_DIR: dir, ADMIN_USER: 'root', ADMIN_PASSWORD: 'SenhaMaster123' },
+  env: { ...process.env, PORT: String(PORT), HTTPS_PORT: String(PORT + 2), DATA_DIR: dir, ADMIN_USER: 'root', ADMIN_PASSWORD: 'SenhaMaster123' },
   stdio: ['ignore', 'pipe', 'inherit'],
 });
 
@@ -135,6 +135,84 @@ async function waitUp() {
   assert.deepStrictEqual(appChat.body.map((x) => x.body), ['Olá, tem encomenda?', 'Sim, na portaria.']);
   assert.deepStrictEqual((await call('GET', '/api/app/chat', null, TJ)).body, [], 'João não vê a conversa da Maria');
   step('chat morador ⇄ operador (com não lidas e isolamento)');
+
+  // aviso visto
+  const notList = (await call('GET', '/api/app/notices', null, T)).body;
+  const encId = notList.find((x) => x.title === 'Encomenda').id;
+  assert.strictEqual(notList.find((x) => x.id === encId).seen_at, null);
+  code(await call('POST', `/api/app/notices/${encId}/seen`, {}, TJ), 404, 'aviso de outro');
+  ok(await call('POST', `/api/app/notices/${encId}/seen`, {}, T), 'marcar visto');
+  ok(await call('POST', `/api/app/notices/${encId}/seen`, {}, T), 'marcar visto 2x');
+  assert.ok((await call('GET', '/api/app/notices', null, T)).body.find((x) => x.id === encId).seen_at);
+  const reads = (await call('GET', `/api/admin/condos/${cid}/notices/${encId}/reads`, null, O)).body;
+  assert.deepStrictEqual([reads.seen.map((x) => x.name), reads.pending.length], [['Maria Silva'], 0]);
+  const genId = notList.find((x) => x.title === 'Reunião').id;
+  const gr = (await call('GET', `/api/admin/condos/${cid}/notices/${genId}/reads`, null, O)).body;
+  assert.ok(gr.pending.some((x) => x.name === 'João'));
+  const nl = (await call('GET', `/api/admin/condos/${cid}/notices`, null, O)).body.find((x) => x.id === encId);
+  assert.strictEqual(nl.seen_count, 1);
+  step('morador marca aviso como visto e o painel mostra quem viu');
+
+  // chat com imagem e áudio
+  const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(100, 2)]);
+  const m4a = Buffer.concat([Buffer.alloc(4), Buffer.from('ftypM4A '), Buffer.alloc(100, 3)]);
+  ok(await call('POST', '/api/app/chat/media', { kind: 'image', data: jpg.toString('base64') }, T), 'imagem do morador');
+  ok(await call('POST', `/api/admin/condos/${cid}/chats/${rs.body.id}/media`, { kind: 'audio', data: m4a.toString('base64') }, O), 'áudio do operador');
+  code(await call('POST', '/api/app/chat/media', { kind: 'image', data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>').toString('base64') }, T), 400, 'svg no chat');
+  code(await call('POST', '/api/app/chat/media', { kind: 'video', data: jpg.toString('base64') }, T), 400, 'tipo inválido');
+  const th = (await call('GET', `/api/admin/condos/${cid}/chats/${rs.body.id}`, null, O)).body;
+  const imgMsg = th.find((x) => x.kind === 'image'); const audMsg = th.find((x) => x.kind === 'audio');
+  assert.ok(imgMsg && audMsg);
+  const raw = (u, tk) => fetch(BASE + u, { headers: { Authorization: `Bearer ${tk}` } });
+  const f1 = await raw(`/api/admin/condos/${cid}/chats/${rs.body.id}/file/${imgMsg.id}`, O);
+  assert.strictEqual(f1.status, 200); assert.strictEqual(f1.headers.get('content-type'), 'image/jpeg');
+  const f2 = await raw(`/api/app/chat/file/${audMsg.id}`, T);
+  assert.strictEqual(f2.status, 200); assert.strictEqual(f2.headers.get('content-type'), 'audio/mp4');
+  assert.strictEqual((await raw(`/api/app/chat/file/${audMsg.id}`, TJ)).status, 404, 'João não baixa a mídia da Maria');
+  assert.strictEqual((await raw(`/api/app/chat/file/${audMsg.id}`, '')).status, 401);
+  assert.strictEqual((await call('GET', '/api/app/chat', null, T)).body.at(-1).kind, 'audio');
+  step('chat aceita imagem e áudio nos dois sentidos, com isolamento e validação');
+
+  // aplicativos conectados
+  await fetch(BASE + '/api/app/config', { headers: { Authorization: `Bearer ${T}`, 'X-Device': 'Pixel 7', 'X-App-Version': '0.3.0', 'X-Sip': 'ok' } });
+  const dv = (await call('GET', `/api/admin/condos/${cid}/devices`, null, O)).body;
+  const dm = dv.find((x) => x.name === 'Maria Silva');
+  assert.ok(dm && dm.online && dm.device === 'Pixel 7' && dm.app_version === '0.3.0' && dm.sip_state === 'ok');
+  step('painel lista aplicativos logados com aparelho, versão e estado do SIP');
+
+  // ramal da portaria / telefone do navegador
+  assert.strictEqual((await call('GET', `/api/admin/condos/${cid}/softphone`, null, O)).body.configured, false);
+  const eO = (await call('POST', `/api/admin/condos/${cid}/extensions`, { number: '2000', secret: 'op2000', label: 'Operador', kind: 'portaria' }, A)).body;
+  const opId = op.body.id;
+  code(await call('PUT', `/api/admin/condos/${cid}/users/${opId}`, { extension_id: e1.id }, A), 400, 'ramal de morador');
+  code(await call('PUT', `/api/admin/condos/${cid}/users/${opId}`, { extension_id: eO.id }, A), 200, 'vincula ramal');
+  code(await call('POST', `/api/admin/condos/${cid}/residents`, { name: 'Z', username: 'zzz', password: 'senha1234', extension_id: eO.id, active: 1 }, A), 400, 'ramal do operador');
+  code(await call('POST', `/api/admin/condos/${cid}/residents`, { name: 'Z', username: 'zzz', password: 'senha1234', extension_id: eP.id, active: 1 }, A), 400, 'ramal portaria p/ morador');
+  code(await call('PUT', `/api/admin/condos/${cid}`, { wss_url: 'http://x' }, M), 400, 'wss inválido');
+  ok(await call('PUT', `/api/admin/condos/${cid}`, { wss_url: 'wss://10.0.0.5:8089/ws' }, M), 'wss');
+  const sp = (await call('GET', `/api/admin/condos/${cid}/softphone`, null, O)).body;
+  assert.deepStrictEqual([sp.configured, sp.wss, sp.domain, sp.user, sp.password], [true, 'wss://10.0.0.5:8089/ws', '10.0.0.5', '2000', 'op2000']);
+  step('ramal do operador (telefone no navegador) e validações de ramal');
+
+  // portaria sempre disponível, mesmo sem grupo; código do condomínio automático
+  const nogrp = (await call('POST', `/api/admin/condos/${cid}/residents`, { name: 'Sem Grupo', username: 'semgrupo', password: 'senha1234', active: 1 }, A)).body;
+  assert.ok(nogrp.id);
+  const ng = (await call('POST', '/api/app/login', { code: 'teste', username: 'semgrupo', password: 'senha1234' })).body.config;
+  assert.deepStrictEqual(ng.extensions.map((x) => x.number).sort(), ['1000', '2000']);
+  const auto = await call('POST', '/api/admin/condos', { name: 'Automático' }, M);
+  ok(auto, 'condo sem código'); assert.match(auto.body.code, /^[A-HJ-NP-Z2-9]{6}$/);
+  const auto2 = await call('POST', '/api/admin/condos', { name: 'Automático 2' }, M);
+  assert.notStrictEqual(auto.body.code, auto2.body.code);
+  step('portaria sempre disponível ao morador; ID do condomínio é gerado automaticamente');
+
+  // HTTPS
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  let hs = 0;
+  for (let i = 0; i < 50 && hs !== 200; i++) {
+    try { hs = (await fetch(`https://127.0.0.1:${PORT + 2}/health`)).status; } catch (e) { await new Promise((r) => setTimeout(r, 200)); }
+  }
+  assert.strictEqual(hs, 200);
+  step('servidor responde também em HTTPS');
 
   // mudança de config muda a versão
   const v1 = (await call('GET', '/api/app/poll?n=0&m=0', null, T)).body.version;

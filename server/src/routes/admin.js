@@ -1,7 +1,9 @@
 const express = require('express');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { db, UPLOADS_DIR, DEFAULT_COLORS } = require('../db');
+const media = require('../media');
 const { panelAuth, need, condoAccess, killSessions } = require('../auth');
 const { wrap, bad, clean, cleanColors, hashPw, now, isConstraint } = require('../util');
 
@@ -15,7 +17,7 @@ const condoPublic = (c) => ({
   id: c.id, code: c.code, name: c.name, info: c.info, phone: c.phone, active: c.active,
   colors: JSON.parse(c.colors),
   logoUrl: c.logo ? `/media/${c.logo}` : null,
-  sip_host: c.sip_host, sip_port: c.sip_port, sip_transport: c.sip_transport,
+  sip_host: c.sip_host, sip_port: c.sip_port, sip_transport: c.sip_transport, wss_url: c.wss_url,
 });
 
 const isUnique = isConstraint;
@@ -37,12 +39,24 @@ r.get('/condos', need('master'), (req, res) => {
   res.json(rows.map((c) => ({ ...condoPublic(c), residents: c.residents, cameras: c.cameras, extensions: c.extensions })));
 });
 
+// ID do condomínio gerado automaticamente (sem caracteres ambíguos: 0/O, 1/I)
+const CODE_ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genCode() {
+  for (let t = 0; t < 100; t++) {
+    let c = '';
+    for (const x of crypto.randomBytes(6)) c += CODE_ALPHA[x % CODE_ALPHA.length];
+    if (!db.prepare('SELECT 1 FROM condos WHERE code=?').get(c)) return c;
+  }
+  throw new Error('Não foi possível gerar um ID único.');
+}
+
 r.post('/condos', need('master'), (req, res) => {
   const v = clean(req.body, {
     name: { t: 'str', req: 1, max: 100, label: 'Nome' },
-    code: { t: 'str', req: 1, max: 32, re: CONDO_CODE, label: 'Código' },
+    code: { t: 'str', max: 32, re: /^([a-zA-Z0-9-]{3,32})?$/, label: 'Código' },
   });
   if (v.error) return bad(res, v.error);
+  if (!v.data.code) v.data.code = genCode();
   try {
     const info = db.prepare('INSERT INTO condos(code, name, colors, created_at) VALUES (?,?,?,?)')
       .run(v.data.code, v.data.name, JSON.stringify(DEFAULT_COLORS), now());
@@ -62,20 +76,22 @@ r.put('/condos/:cid', need('master'), condoAccess, (req, res) => {
     sip_host: { t: 'str', max: 200, re: /^[A-Za-z0-9.-]*$/, label: 'Servidor VoIP' },
     sip_port: { t: 'int', min: 1, max: 65535, req: 1, label: 'Porta' },
     sip_transport: { t: 'enum', vals: ['UDP', 'TCP'], label: 'Transporte' },
+    wss_url: { t: 'str', max: 300, re: /^(wss?:\/\/\S+)?$/, label: 'URL WebSocket (wss://…)' },
     active: { t: 'bool' },
   });
   if (v.error) return bad(res, v.error);
   const colors = cleanColors(req.body.colors, JSON.parse(c.colors));
   if (colors.error) return bad(res, colors.error);
   try {
-    db.prepare(`UPDATE condos SET name=?, code=?, info=?, phone=?, sip_host=?, sip_port=?, sip_transport=?, active=?, colors=? WHERE id=?`)
+    db.prepare(`UPDATE condos SET name=?, code=?, info=?, phone=?, sip_host=?, sip_port=?, sip_transport=?, wss_url=?, active=?, colors=? WHERE id=?`)
       .run(v.data.name, v.data.code, v.data.info, v.data.phone, v.data.sip_host, v.data.sip_port,
-        v.data.sip_transport, v.data.active, JSON.stringify(colors.data), c.id);
+        v.data.sip_transport, v.data.wss_url, v.data.active, JSON.stringify(colors.data), c.id);
   } catch (e) { return dbError(res, e, 'Já existe um condomínio com esse código.'); }
   res.json(condoPublic(db.prepare('SELECT * FROM condos WHERE id=?').get(c.id)));
 });
 
 r.delete('/condos/:cid', need('master'), condoAccess, (req, res) => {
+  media.purge(db.prepare('SELECT media FROM messages WHERE condo_id=? AND media IS NOT NULL').all(req.condo.id));
   if (req.condo.logo) fs.rmSync(path.join(UPLOADS_DIR, req.condo.logo), { force: true });
   db.prepare('DELETE FROM condos WHERE id=?').run(req.condo.id);
   res.json({ ok: true });
@@ -87,7 +103,7 @@ const IMG = {
   webp: { mime: 'image/webp', ok: (b) => b.slice(0, 4).toString() === 'RIFF' && b.slice(8, 12).toString() === 'WEBP' },
 };
 
-r.post('/condos/:cid/logo', need('master'), condoAccess, (req, res) => {
+r.post('/condos/:cid/logo', need('master'), condoAccess, express.json({ limit: '4mb' }), (req, res) => {
   const data = String(req.body.data || '');
   const comma = data.indexOf(',');
   const head = data.slice(0, comma);
@@ -110,14 +126,27 @@ r.delete('/condos/:cid/logo', need('master'), condoAccess, (req, res) => {
 });
 
 // -------------------------------------------------- usuários do painel (equipe)
-const userOut = 'id, username, name, role, active, created_at';
+const USER_SELECT = `SELECT u.id, u.username, u.name, u.role, u.active, u.created_at, u.extension_id, e.number AS ext_number
+  FROM users u LEFT JOIN extensions e ON e.id=u.extension_id`;
 
 r.get('/condos/:cid/users', need(...ADMINS), condoAccess, (req, res) => {
-  res.json(db.prepare(`SELECT ${userOut} FROM users WHERE condo_id=? ORDER BY role, name`).all(req.condo.id));
+  res.json(db.prepare(`${USER_SELECT} WHERE u.condo_id=? ORDER BY u.role, u.name`).all(req.condo.id));
 });
 
 function allowedRoles(user) {
   return user.role === 'master' ? ['condo_admin', 'operator'] : ['operator'];
+}
+
+// ramal usado pelo telefone do navegador: nunca de morador, nunca compartilhado
+function checkUserExt(cid, extId, selfId) {
+  if (extId === null) return null;
+  const e = db.prepare('SELECT kind FROM extensions WHERE id=? AND condo_id=?').get(extId, cid);
+  if (!e) return 'Ramal inválido.';
+  if (e.kind === 'morador') return 'Use um ramal do tipo Portaria ou Outro (não de morador).';
+  if (db.prepare('SELECT 1 FROM residents WHERE extension_id=?').get(extId)) return 'Esse ramal já está vinculado a um morador.';
+  const u = db.prepare('SELECT name FROM users WHERE extension_id=? AND id<>?').get(extId, selfId || 0);
+  if (u) return `Esse ramal já está com ${u.name}.`;
+  return null;
 }
 
 r.post('/condos/:cid/users', need(...ADMINS), condoAccess, wrap(async (req, res) => {
@@ -125,14 +154,17 @@ r.post('/condos/:cid/users', need(...ADMINS), condoAccess, wrap(async (req, res)
     username: { t: 'str', req: 1, max: 40, re: /^[A-Za-z0-9._-]{3,40}$/, label: 'Usuário' },
     name: { t: 'str', req: 1, max: 100, label: 'Nome' },
     role: { t: 'enum', vals: allowedRoles(req.user), label: 'Perfil' },
+    extension_id: { t: 'int', label: 'Ramal' },
   });
   if (v.error) return bad(res, v.error);
   const password = String(req.body.password || '');
   if (password.length < 8) return bad(res, 'A senha deve ter ao menos 8 caracteres.');
+  const extErr = checkUserExt(req.condo.id, v.data.extension_id, 0);
+  if (extErr) return bad(res, extErr);
   try {
-    const info = db.prepare('INSERT INTO users(condo_id, username, name, password_hash, role, created_at) VALUES (?,?,?,?,?,?)')
-      .run(req.condo.id, v.data.username, v.data.name, await hashPw(password), v.data.role, now());
-    res.json(db.prepare(`SELECT ${userOut} FROM users WHERE id=?`).get(info.lastInsertRowid));
+    const info = db.prepare('INSERT INTO users(condo_id, username, name, password_hash, role, extension_id, created_at) VALUES (?,?,?,?,?,?,?)')
+      .run(req.condo.id, v.data.username, v.data.name, await hashPw(password), v.data.role, v.data.extension_id, now());
+    res.json(db.prepare(`${USER_SELECT} WHERE u.id=?`).get(info.lastInsertRowid));
   } catch (e) { dbError(res, e, 'Esse nome de usuário já está em uso.'); }
 }));
 
@@ -150,15 +182,19 @@ r.put('/condos/:cid/users/:id', need(...ADMINS), condoAccess, wrap(async (req, r
     name: { t: 'str', req: 1, max: 100, label: 'Nome' },
     role: { t: 'enum', vals: allowedRoles(req.user), label: 'Perfil' },
     active: { t: 'bool' },
+    extension_id: { t: 'int', label: 'Ramal' },
   });
   if (v.error) return bad(res, v.error);
   if (u.id === req.user.id && !v.data.active) return bad(res, 'Você não pode desativar a si mesmo.');
   const password = req.body.password ? String(req.body.password) : '';
   if (password && password.length < 8) return bad(res, 'A senha deve ter ao menos 8 caracteres.');
-  db.prepare('UPDATE users SET name=?, role=?, active=? WHERE id=?').run(v.data.name, v.data.role, v.data.active, u.id);
+  const extErr = checkUserExt(req.condo.id, v.data.extension_id, u.id);
+  if (extErr) return bad(res, extErr);
+  db.prepare('UPDATE users SET name=?, role=?, active=?, extension_id=? WHERE id=?')
+    .run(v.data.name, v.data.role, v.data.active, v.data.extension_id, u.id);
   if (password) db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(await hashPw(password), u.id);
   if (password || !v.data.active) killSessions('panel', u.id);
-  res.json(db.prepare(`SELECT ${userOut} FROM users WHERE id=?`).get(u.id));
+  res.json(db.prepare(`${USER_SELECT} WHERE u.id=?`).get(u.id));
 }));
 
 r.delete('/condos/:cid/users/:id', need(...ADMINS), condoAccess, (req, res) => {
@@ -295,7 +331,10 @@ r.get('/condos/:cid/residents', need(...ALL), condoAccess, (req, res) => {
 function checkResidentRefs(cid, d, selfId) {
   if (d.group_id !== null && !db.prepare('SELECT 1 FROM groups WHERE id=? AND condo_id=?').get(d.group_id, cid)) return 'Grupo inválido.';
   if (d.extension_id !== null) {
-    if (!db.prepare('SELECT 1 FROM extensions WHERE id=? AND condo_id=?').get(d.extension_id, cid)) return 'Ramal inválido.';
+    const ext = db.prepare('SELECT kind FROM extensions WHERE id=? AND condo_id=?').get(d.extension_id, cid);
+    if (!ext) return 'Ramal inválido.';
+    if (ext.kind === 'portaria') return 'Ramal de portaria não pode ser vinculado a um morador.';
+    if (db.prepare('SELECT 1 FROM users WHERE extension_id=?').get(d.extension_id)) return 'Esse ramal já está em uso por um usuário do painel.';
     const used = db.prepare('SELECT name FROM residents WHERE extension_id=? AND id<>?').get(d.extension_id, selfId || 0);
     if (used) return `Esse ramal já está vinculado a ${used.name}.`;
   }
@@ -339,6 +378,7 @@ r.put('/condos/:cid/residents/:id', need(...ADMINS), condoAccess, wrap(async (re
 
 r.delete('/condos/:cid/residents/:id', need(...ADMINS), condoAccess, (req, res) => {
   const id = Number(req.params.id);
+  media.purge(db.prepare('SELECT media FROM messages WHERE resident_id=? AND media IS NOT NULL').all(id));
   killSessions('app', id);
   db.prepare('DELETE FROM residents WHERE id=? AND condo_id=?').run(id, req.condo.id);
   res.json({ ok: true });
@@ -349,7 +389,10 @@ const NOTICE_KINDS = ['aviso', 'encomenda', 'comunicado', 'urgente'];
 
 r.get('/condos/:cid/notices', need(...ALL), condoAccess, (req, res) => {
   res.json(db.prepare(`
-    SELECT n.id, n.kind, n.title, n.body, n.resident_id, n.created_at, r.name AS resident_name, u.name AS author
+    SELECT n.id, n.kind, n.title, n.body, n.resident_id, n.created_at, r.name AS resident_name, u.name AS author,
+      (SELECT COUNT(*) FROM notice_reads nr WHERE nr.notice_id=n.id) AS seen_count,
+      CASE WHEN n.resident_id IS NULL
+        THEN (SELECT COUNT(*) FROM residents x WHERE x.condo_id=n.condo_id AND x.active=1) ELSE 1 END AS target_count
     FROM notices n LEFT JOIN residents r ON r.id=n.resident_id LEFT JOIN users u ON u.id=n.created_by
     WHERE n.condo_id=? ORDER BY n.id DESC LIMIT 200`).all(req.condo.id));
 });
@@ -370,6 +413,22 @@ r.post('/condos/:cid/notices', need(...ALL), condoAccess, (req, res) => {
   res.json({ id: info.lastInsertRowid });
 });
 
+// quem já viu e quem ainda não viu um aviso
+r.get('/condos/:cid/notices/:id/reads', need(...ALL), condoAccess, (req, res) => {
+  const n = db.prepare('SELECT id, resident_id FROM notices WHERE id=? AND condo_id=?').get(Number(req.params.id), req.condo.id);
+  if (!n) return bad(res, 'Aviso não encontrado.', 404);
+  const targets = n.resident_id
+    ? db.prepare('SELECT id, name, block, unit FROM residents WHERE id=?').all(n.resident_id)
+    : db.prepare('SELECT id, name, block, unit FROM residents WHERE condo_id=? AND active=1 ORDER BY block, name').all(req.condo.id);
+  const reads = new Map(db.prepare('SELECT resident_id, read_at FROM notice_reads WHERE notice_id=?').all(n.id)
+    .map((x) => [x.resident_id, x.read_at]));
+  const seen = [];
+  const pending = [];
+  for (const t of targets) (reads.has(t.id) ? seen : pending).push({ ...t, read_at: reads.get(t.id) || null });
+  seen.sort((a, b) => a.read_at - b.read_at);
+  res.json({ seen, pending });
+});
+
 r.delete('/condos/:cid/notices/:id', need(...ALL), condoAccess, (req, res) => {
   db.prepare('DELETE FROM notices WHERE id=? AND condo_id=?').run(Number(req.params.id), req.condo.id);
   res.json({ ok: true });
@@ -379,7 +438,8 @@ r.delete('/condos/:cid/notices/:id', need(...ALL), condoAccess, (req, res) => {
 r.get('/condos/:cid/chats', need(...ALL), condoAccess, (req, res) => {
   res.json(db.prepare(`
     SELECT r.id, r.name, r.block, r.unit,
-      (SELECT body FROM messages m WHERE m.resident_id=r.id ORDER BY m.id DESC LIMIT 1) AS last_body,
+      (SELECT CASE m.kind WHEN 'image' THEN '[Foto]' WHEN 'audio' THEN '[Áudio]' ELSE m.body END
+         FROM messages m WHERE m.resident_id=r.id ORDER BY m.id DESC LIMIT 1) AS last_body,
       (SELECT created_at FROM messages m WHERE m.resident_id=r.id ORDER BY m.id DESC LIMIT 1) AS last_at,
       (SELECT COUNT(*) FROM messages m WHERE m.resident_id=r.id AND m.sender='resident' AND m.read_by_operator=0) AS unread
     FROM residents r WHERE r.condo_id=? AND r.active=1
@@ -396,7 +456,7 @@ r.get('/condos/:cid/chats/:rid', need(...ALL), condoAccess, (req, res) => {
   const rr = chatResident(req, res);
   if (!rr) return;
   const after = Number(req.query.after) || 0;
-  const items = db.prepare('SELECT id, sender, operator_name, body, created_at FROM messages WHERE resident_id=? AND id>? ORDER BY id LIMIT 300')
+  const items = db.prepare('SELECT id, sender, operator_name, kind, body, created_at FROM messages WHERE resident_id=? AND id>? ORDER BY id LIMIT 300')
     .all(rr.id, after);
   db.prepare("UPDATE messages SET read_by_operator=1 WHERE resident_id=? AND sender='resident' AND read_by_operator=0").run(rr.id);
   res.json(items);
@@ -410,6 +470,57 @@ r.post('/condos/:cid/chats/:rid', need(...ALL), condoAccess, (req, res) => {
   const info = db.prepare(`INSERT INTO messages(condo_id, resident_id, sender, operator_id, operator_name, body, read_by_operator, created_at)
     VALUES (?,?,?,?,?,?,1,?)`).run(req.condo.id, rr.id, 'operator', req.user.id, req.user.name || req.user.username, body, now());
   res.json({ id: info.lastInsertRowid });
+});
+
+// foto / áudio enviados pelo operador
+r.post('/condos/:cid/chats/:rid/media', need(...ALL), condoAccess, express.json({ limit: '8mb' }), (req, res) => {
+  const rr = chatResident(req, res);
+  if (!rr) return;
+  const kind = String(req.body.kind || '');
+  const m = media.save(kind, req.body.data);
+  if (m.error) return bad(res, m.error);
+  const info = db.prepare(`INSERT INTO messages(condo_id, resident_id, sender, operator_id, operator_name, kind, media, mime, body, read_by_operator, created_at)
+    VALUES (?,?,?,?,?,?,?,?,'',1,?)`)
+    .run(req.condo.id, rr.id, 'operator', req.user.id, req.user.name || req.user.username, kind, m.file, m.mime, now());
+  res.json({ id: info.lastInsertRowid });
+});
+
+r.get('/condos/:cid/chats/:rid/file/:mid', need(...ALL), condoAccess, (req, res) => {
+  const rr = chatResident(req, res);
+  if (!rr) return;
+  const row = db.prepare('SELECT media, mime FROM messages WHERE id=? AND resident_id=? AND media IS NOT NULL')
+    .get(Number(req.params.mid), rr.id);
+  if (!row) return bad(res, 'Arquivo não encontrado.', 404);
+  media.send(res, row);
+});
+
+// ------------------------------------------------- aplicativos conectados (logados)
+r.get('/condos/:cid/devices', need(...ALL), condoAccess, (req, res) => {
+  const t = now();
+  const rows = db.prepare(`
+    SELECT r.id AS resident_id, r.name, r.block, r.unit, s.created_at, s.last_seen, s.device, s.app_version, s.ip, s.sip_state
+    FROM sessions s JOIN residents r ON r.id=s.subject_id
+    WHERE s.kind='app' AND r.condo_id=? AND s.expires_at>? ORDER BY s.last_seen DESC`).all(req.condo.id, t);
+  res.json(rows.map((x) => ({ ...x, online: (x.last_seen || 0) >= t - 40 })));
+});
+
+// ----------------------------------------- telefone do navegador (cliente VoIP do operador)
+r.get('/condos/:cid/softphone', need(...ALL), condoAccess, (req, res) => {
+  const c = req.condo;
+  if (!c.sip_host) return res.json({ configured: false, reason: 'O servidor VoIP (Issabel) ainda não foi informado. O administrador primário preenche em "Servidor VoIP".' });
+  if (!c.wss_url) return res.json({ configured: false, reason: 'A URL WebSocket (wss://…) do Issabel ainda não foi informada. O administrador primário preenche em "Servidor VoIP".' });
+  const u = db.prepare('SELECT extension_id FROM users WHERE id=?').get(req.user.id);
+  const ext = u && u.extension_id ? db.prepare('SELECT * FROM extensions WHERE id=? AND condo_id=?').get(u.extension_id, c.id) : null;
+  if (!ext) return res.json({ configured: false, reason: 'Nenhum ramal está vinculado ao seu usuário. O administrador do condomínio vincula em "Equipe do painel".' });
+  res.json({
+    configured: true,
+    wss: c.wss_url,
+    domain: c.sip_host,
+    user: ext.number,
+    password: ext.secret,
+    displayName: req.user.name || ext.label || ext.number,
+    stun: 'stun:stun.l.google.com:19302',
+  });
 });
 
 module.exports = r;

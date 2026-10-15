@@ -7,8 +7,8 @@ const APP_TTL = 180 * 24 * 3600;
 function createSession(kind, subjectId) {
   const token = newToken();
   const ttl = kind === 'panel' ? PANEL_TTL : APP_TTL;
-  db.prepare('INSERT INTO sessions(token_hash, kind, subject_id, expires_at) VALUES (?,?,?,?)')
-    .run(sha256(token), kind, subjectId, now() + ttl);
+  db.prepare('INSERT INTO sessions(token_hash, kind, subject_id, expires_at, created_at, last_seen) VALUES (?,?,?,?,?,?)')
+    .run(sha256(token), kind, subjectId, now() + ttl, now(), now());
   return token;
 }
 
@@ -29,6 +29,19 @@ function destroyToken(token) {
 
 function killSessions(kind, subjectId) {
   db.prepare('DELETE FROM sessions WHERE kind=? AND subject_id=?').run(kind, subjectId);
+}
+
+const clip = (v, n) => String(v || '').replace(/[^\x20-\x7E]/g, '').slice(0, n);
+
+/** Registra atividade do aparelho (usado no painel "Aplicativos conectados"). */
+function touchSession(req, s) {
+  const t = now();
+  const device = clip(req.headers['x-device'], 80);
+  const version = clip(req.headers['x-app-version'], 20);
+  const sip = clip(req.headers['x-sip'], 12);
+  if (s.last_seen && t - s.last_seen < 3 && s.sip_state === sip) return;
+  db.prepare('UPDATE sessions SET last_seen=?, device=?, app_version=?, ip=?, sip_state=? WHERE token_hash=?')
+    .run(t, device || s.device || '', version || s.app_version || '', clip(req.ip, 64), sip || s.sip_state || '', s.token_hash);
 }
 
 /** Exige sessão de painel válida; define req.user. */
@@ -57,6 +70,7 @@ function appAuth(req, res, next) {
   req.resident = r;
   req.condo = c;
   req.token = bearer(req);
+  touchSession(req, s);
   next();
 }
 

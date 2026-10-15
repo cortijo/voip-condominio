@@ -133,7 +133,32 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(resident_id, id);
+
+-- "visto" dos avisos
+CREATE TABLE IF NOT EXISTS notice_reads (
+  notice_id INTEGER NOT NULL REFERENCES notices(id) ON DELETE CASCADE,
+  resident_id INTEGER NOT NULL REFERENCES residents(id) ON DELETE CASCADE,
+  read_at INTEGER NOT NULL,
+  PRIMARY KEY (notice_id, resident_id)
+);
 `);
+
+// migrações para bancos criados em versões anteriores
+function addColumn(table, col, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
+}
+addColumn('condos', 'wss_url', "TEXT NOT NULL DEFAULT ''");
+addColumn('users', 'extension_id', 'INTEGER REFERENCES extensions(id) ON DELETE SET NULL');
+addColumn('sessions', 'created_at', 'INTEGER');
+addColumn('sessions', 'last_seen', 'INTEGER');
+addColumn('sessions', 'device', "TEXT NOT NULL DEFAULT ''");
+addColumn('sessions', 'app_version', "TEXT NOT NULL DEFAULT ''");
+addColumn('sessions', 'ip', "TEXT NOT NULL DEFAULT ''");
+addColumn('sessions', 'sip_state', "TEXT NOT NULL DEFAULT ''");
+addColumn('messages', 'kind', "TEXT NOT NULL DEFAULT 'text'");
+addColumn('messages', 'media', 'TEXT');
+addColumn('messages', 'mime', "TEXT NOT NULL DEFAULT ''");
 
 const DEFAULT_COLORS = {
   primary: '#FF9800',
