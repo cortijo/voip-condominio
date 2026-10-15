@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const { UPLOADS_DIR } = require('./db');
 const { seedAdmin } = require('./seed');
+const { isConstraint } = require('./util');
 
 const PORT = Number(process.env.PORT) || 9670;
 const app = express();
@@ -40,7 +41,7 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Rota não encontrad
 app.use((err, req, res, next) => {
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON inválido.' });
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Conteúdo muito grande.' });
-  if (String(err.code || '').startsWith('SQLITE_CONSTRAINT')) return res.status(409).json({ error: 'Registro duplicado ou em uso.' });
+  if (isConstraint(err)) return res.status(409).json({ error: 'Registro duplicado ou em uso.' });
   console.error(err);
   res.status(500).json({ error: 'Erro interno do servidor.' });
 });

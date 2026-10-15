@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { db, UPLOADS_DIR, DEFAULT_COLORS } = require('../db');
 const { panelAuth, need, condoAccess, killSessions } = require('../auth');
-const { wrap, bad, clean, cleanColors, hashPw, now } = require('../util');
+const { wrap, bad, clean, cleanColors, hashPw, now, isConstraint } = require('../util');
 
 const r = express.Router();
 r.use(panelAuth);
@@ -18,7 +18,7 @@ const condoPublic = (c) => ({
   sip_host: c.sip_host, sip_port: c.sip_port, sip_transport: c.sip_transport,
 });
 
-const isUnique = (e) => e && String(e.code).startsWith('SQLITE_CONSTRAINT');
+const isUnique = isConstraint;
 function dbError(res, e, msg = 'Registro duplicado.') {
   if (isUnique(e)) return bad(res, msg, 409);
   throw e;

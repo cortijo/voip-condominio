@@ -1,4 +1,4 @@
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite'); // embutido no Node 22: sem compilação nativa
 const fs = require('fs');
 const path = require('path');
 
@@ -6,9 +6,17 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'interfone.db'));
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const raw = new DatabaseSync(path.join(DATA_DIR, 'interfone.db'));
+raw.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
+
+const db = {
+  exec: (sql) => raw.exec(sql),
+  prepare: (sql) => raw.prepare(sql),
+  transaction: (fn) => (...args) => {
+    raw.exec('BEGIN');
+    try { const r = fn(...args); raw.exec('COMMIT'); return r; } catch (e) { raw.exec('ROLLBACK'); throw e; }
+  },
+};
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS condos (

@@ -9,6 +9,7 @@ const checkPw = (pw, hash) => bcrypt.compare(pw, hash);
 // hash fixo para gastar o mesmo tempo quando o usuário não existe
 const DUMMY_HASH = bcrypt.hashSync('dummy-password-for-timing', 10);
 
+const isConstraint = (e) => !!e && (String(e.code || '').startsWith('SQLITE_CONSTRAINT') || /constraint failed/i.test(String(e.message || '')));
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg });
 
@@ -80,6 +81,6 @@ setInterval(() => {
 }, 60 * 1000).unref();
 
 module.exports = {
-  now, sha256, newToken, hashPw, checkPw, DUMMY_HASH, wrap, bad, clean, cleanColors,
+  now, isConstraint, sha256, newToken, hashPw, checkPw, DUMMY_HASH, wrap, bad, clean, cleanColors,
   COLOR_KEYS, loginLimited, loginFailed, loginOk,
 };

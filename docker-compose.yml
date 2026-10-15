@@ -1,6 +1,9 @@
 services:
   interfone-server:
-    build: ./server
+    build:
+      context: ./server
+      # usa a rede do servidor durante o build (evita falha de acesso à internet pela ponte do Docker)
+      network: host
     container_name: interfone-server
     restart: unless-stopped
     ports:

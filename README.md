@@ -37,6 +37,7 @@ docker logs interfone-server   # confirma "ouvindo na porta 9670"
 - Os dados ficam no volume Docker `interfone-data` (banco SQLite + logotipos). **Faça backup desse volume.**
 - Esqueceu a senha do primário: `docker exec -it interfone-server node src/reset-admin.js "NovaSenhaForte123"`
 - Atualizar: `git pull && docker compose up -d --build` (os dados são preservados).
+- Se o build falhar por falta de internet no container, confirme que o servidor alcança `registry.npmjs.org` (porta 443): `curl -sI https://registry.npmjs.org | head -1`. O `docker-compose.yml` já usa a rede do host no build.
 
 ## Primeiro uso (passo a passo)
 
